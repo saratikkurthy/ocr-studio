@@ -727,3 +727,25 @@ button:disabled {
 .run-ocr-button {
   height: 44px;
 }
+.selection-hint {
+  color: #9a3412;
+  font-size: 12px;
+  font-weight: 600;
+}
+.panel {
+  overflow-x: auto;
+}
+
+td:last-child {
+  white-space: nowrap;
+}
+
+.small-button.danger {
+  background: #fee2e2;
+  border: 1px solid #fca5a5;
+  color: #dc2626;
+}
+
+.small-button.danger:hover {
+  background: #fecaca;
+}

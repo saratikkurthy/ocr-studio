@@ -11,4 +11,7 @@ contextBridge.exposeInMainWorld("ocrStudio", {
   checkOcrTools: () => ipcRenderer.invoke("ocr:checkTools"),
   runOcrForProject: (data) => ipcRenderer.invoke("ocr:runProject", data),
   listProjectExports: (data) => ipcRenderer.invoke("project:listExports", data),
+  deleteProject: (data) => ipcRenderer.invoke("project:delete", data),
+  deleteProjectDocument: (data) => ipcRenderer.invoke("project:deleteDocument", data),
+  deleteProjectExport: (data) => ipcRenderer.invoke("project:deleteExport", data),
 });

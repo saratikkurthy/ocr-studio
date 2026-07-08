@@ -4,14 +4,6 @@ import { fileURLToPath } from "url";
 import { app, BrowserWindow, ipcMain, dialog, shell } from "electron";
 import { exec, spawn } from "child_process";
 
-/**process.on("uncaughtException", (error) => {
-  console.error("UNCAUGHT EXCEPTION:", error);
-});
-
-process.on("unhandledRejection", (reason) => {
-  console.error("UNHANDLED REJECTION:", reason);
-});**/
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -33,18 +25,11 @@ function createWindow() {
   });
 
   win.loadURL("http://localhost:5173");
-  win.webContents.openDevTools();
-
-  win.webContents.on("render-process-gone", (_, details) => {
-    console.error("Renderer process gone:", details);
-  });
 }
 
 function getAppDataPath() {
   const appData = path.join(app.getPath("userData"), "OCR Studio");
-  if (!fs.existsSync(appData)) {
-    fs.mkdirSync(appData, { recursive: true });
-  }
+  fs.mkdirSync(appData, { recursive: true });
   return appData;
 }
 
@@ -54,11 +39,7 @@ function getRecentProjectsPath() {
 
 function readRecentProjects() {
   const filePath = getRecentProjectsPath();
-
-  if (!fs.existsSync(filePath)) {
-    return [];
-  }
-
+  if (!fs.existsSync(filePath)) return [];
   return JSON.parse(fs.readFileSync(filePath, "utf-8"));
 }
 
@@ -69,11 +50,31 @@ function saveRecentProjects(projects) {
     "utf-8"
   );
 }
+
 function windowsPathToWslPath(windowsPath) {
   const normalized = path.resolve(windowsPath);
   const driveLetter = normalized[0].toLowerCase();
   const rest = normalized.slice(2).replace(/\\/g, "/");
   return `/mnt/${driveLetter}${rest}`;
+}
+
+function runCommand(command) {
+  return new Promise((resolve) => {
+    exec(command, (error, stdout, stderr) => {
+      if (error) {
+        resolve({
+          installed: false,
+          output: stderr || error.message,
+        });
+        return;
+      }
+
+      resolve({
+        installed: true,
+        output: stdout,
+      });
+    });
+  });
 }
 
 ipcMain.handle("workspace:selectFolder", async () => {
@@ -82,10 +83,7 @@ ipcMain.handle("workspace:selectFolder", async () => {
     properties: ["openDirectory", "createDirectory"],
   });
 
-  if (result.canceled || result.filePaths.length === 0) {
-    return null;
-  }
-
+  if (result.canceled || result.filePaths.length === 0) return null;
   return result.filePaths[0];
 });
 
@@ -110,9 +108,9 @@ ipcMain.handle("project:create", async (_, data) => {
     status: "Draft",
     workspacePath: data.workspacePath,
     projectPath,
+    compression: data.compression || "medium",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-    compression: data.compression || "medium",
   };
 
   fs.writeFileSync(
@@ -150,11 +148,10 @@ ipcMain.handle("project:importFiles", async (_, data) => {
     ],
   });
 
-  if (result.canceled || result.filePaths.length === 0) {
-    return [];
-  }
+  if (result.canceled || result.filePaths.length === 0) return [];
 
   const inputFolder = path.join(data.projectPath, "Input");
+  fs.mkdirSync(inputFolder, { recursive: true });
 
   const importedFiles = result.filePaths.map((sourcePath) => {
     const fileName = path.basename(sourcePath);
@@ -175,7 +172,6 @@ ipcMain.handle("project:importFiles", async (_, data) => {
   const documentsPath = path.join(data.projectPath, "documents.json");
 
   let existing = [];
-
   if (fs.existsSync(documentsPath)) {
     existing = JSON.parse(fs.readFileSync(documentsPath, "utf-8"));
   }
@@ -190,24 +186,23 @@ ipcMain.handle("project:importFiles", async (_, data) => {
 ipcMain.handle("project:listDocuments", async (_, data) => {
   const documentsPath = path.join(data.projectPath, "documents.json");
 
-  if (!fs.existsSync(documentsPath)) {
-    return [];
-  }
+  if (!fs.existsSync(documentsPath)) return [];
 
   return JSON.parse(fs.readFileSync(documentsPath, "utf-8"));
 });
 
-
 ipcMain.handle("project:listExports", async (_, data) => {
   const exportFolder = path.join(data.projectPath, "Export");
 
-  if (!fs.existsSync(exportFolder)) {
-    return [];
-  }
+  if (!fs.existsSync(exportFolder)) return [];
 
   return fs
     .readdirSync(exportFolder)
-    .filter((file) => file.toLowerCase().endsWith(".pdf"))
+    .filter(
+      (file) =>
+        file.toLowerCase().endsWith(".pdf") ||
+        file.toLowerCase().endsWith(".txt")
+    )
     .map((file) => {
       const fullPath = path.join(exportFolder, file);
       const stat = fs.statSync(fullPath);
@@ -233,31 +228,10 @@ ipcMain.handle("shell:openPath", async (_, filePath) => {
 ipcMain.handle("shell:openInputFolder", async (_, projectPath) => {
   const inputFolder = path.join(projectPath, "Input");
 
-  if (!fs.existsSync(inputFolder)) {
-    fs.mkdirSync(inputFolder, { recursive: true });
-  }
+  fs.mkdirSync(inputFolder, { recursive: true });
 
   return await shell.openPath(inputFolder);
 });
-
-function runCommand(command) {
-  return new Promise((resolve) => {
-    exec(command, (error, stdout, stderr) => {
-      if (error) {
-        resolve({
-          installed: false,
-          output: stderr || error.message,
-        });
-        return;
-      }
-
-      resolve({
-        installed: true,
-        output: stdout,
-      });
-    });
-  });
-}
 
 ipcMain.handle("ocr:checkTools", async () => {
   const tesseract = await runCommand(
@@ -282,250 +256,278 @@ ipcMain.handle("ocr:runProject", async (_, data) => {
   }
 
   const documents = JSON.parse(fs.readFileSync(documentsPath, "utf-8"));
+  const selectedDocumentIds = data.documentIds || [];
 
-  const firstPdf = documents.find((doc) =>
-    doc.fileName.toLowerCase().endsWith(".pdf")
+  const selectedDocuments = documents.filter(
+    (doc) =>
+      selectedDocumentIds.includes(doc.id) &&
+      doc.fileName.toLowerCase().endsWith(".pdf")
   );
 
-  if (!firstPdf) {
+  if (selectedDocuments.length === 0) {
     return {
       success: false,
-      message: "Please import a PDF file first.",
+      message: "Please select at least one PDF file first.",
     };
   }
 
-  const inputPath = firstPdf.destinationPath;
-  const outputPath = path.join(
-    data.projectPath,
-    "Export",
-    firstPdf.fileName.replace(/\.pdf$/i, "_searchable.pdf")
-  );
+  const exportFolder = path.join(data.projectPath, "Export");
+  const logsFolder = path.join(data.projectPath, "Logs");
 
-  if (fs.existsSync(outputPath)) {
-    fs.unlinkSync(outputPath);
-  }
+  fs.mkdirSync(exportFolder, { recursive: true });
+  fs.mkdirSync(logsFolder, { recursive: true });
 
-  const inputWsl = windowsPathToWslPath(inputPath);
-  const outputWsl = windowsPathToWslPath(outputPath);
+  const logPath = path.join(logsFolder, "ocr-run.log");
+  fs.writeFileSync(logPath, "", "utf-8");
 
-  const logPath = path.join(data.projectPath, "Logs", "ocr-run.log");
   const compression = data.compression || "medium";
+  const outputType = data.outputType || "searchable_pdf";
 
-  const compressionArgs = {
-    low: [
-      "--optimize", "1",
-      "--jpeg-quality", "95",
-      "--png-quality", "95",
-    ],
+  const compressionArgs =
+    {
+      low: ["--optimize", "1", "--jpeg-quality", "95", "--png-quality", "95"],
+      medium: [
+        "--optimize",
+        "2",
+        "--jpeg-quality",
+        "85",
+        "--png-quality",
+        "85",
+      ],
+      high: [
+        "--optimize",
+        "3",
+        "--jpeg-quality",
+        "65",
+        "--png-quality",
+        "65",
+      ],
+      maximum: [
+        "--optimize",
+        "3",
+        "--jpeg-quality",
+        "45",
+        "--png-quality",
+        "45",
+      ],
+    }[compression] || ["--optimize", "2", "--jpeg-quality", "85", "--png-quality", "85"];
 
-    medium: [
-      "--optimize", "2",
-      "--jpeg-quality", "85",
-      "--png-quality", "85",
-      "--tesseract-downsample-large-images",
-      "--tesseract-downsample-above", "300",
-    ],
-
-    high: [
-      "--optimize", "3",
-      "--jpeg-quality", "65",
-      "--png-quality", "65",
-      "--tesseract-downsample-large-images",
-      "--tesseract-downsample-above", "220",
-    ],
-
-    maximum: [
-      "--optimize", "3",
-      "--jpeg-quality", "45",
-      "--png-quality", "45",
-      "--tesseract-downsample-large-images",
-      "--tesseract-downsample-above", "150",
-    ],
-  }[compression] || [
-      "--optimize", "2",
-      "--jpeg-quality", "85",
-      "--png-quality", "85",
-    ];
-  const args = [
-    "-d",
-    "Ubuntu-24.04",
-    "--",
-    "ocrmypdf",
-    "--skip-text",
-    "--deskew",
-    ...compressionArgs,
-    "--output-type",
-    "pdf",
-    "-l",
-    data.language,
-    inputWsl,
-    outputWsl,
-  ];
-
-  fs.writeFileSync(
-    logPath,
-    `COMMAND:\nwsl.exe ${args.join(" ")}\n\n`,
-    "utf-8"
-  );
-
-  return new Promise((resolve) => {
-    const child = spawn("wsl.exe", args, {
-      windowsHide: true,
-    });
-
-    child.stdout.on("data", (chunk) => {
-      fs.appendFileSync(logPath, chunk.toString(), "utf-8");
-    });
-
-    child.stderr.on("data", (chunk) => {
-      fs.appendFileSync(logPath, chunk.toString(), "utf-8");
-    });
-
-    child.on("error", (error) => {
-      fs.appendFileSync(logPath, `\nPROCESS ERROR:\n${error.message}`, "utf-8");
-
-      resolve({
-        success: false,
-        message: error.message,
-      });
-    });
-
-    child.on("close", (code) => {
-      fs.appendFileSync(logPath, `\n\nPROCESS EXIT CODE: ${code}\n`, "utf-8");
-
-      if (code !== 0) {
-        const inputSize = fs.statSync(inputPath).size;
-        const outputSize = fs.statSync(outputPath).size;
-        const reductionPercent = ((inputSize - outputSize) / inputSize) * 100;
-        resolve({
-          success: false,
-          message: `OCR process failed with exit code ${code}. Check Logs/ocr-run.log`,
-        });
-        return;
-      }
-
-      if (!fs.existsSync(outputPath)) {
-        resolve({
-          success: false,
-          message:
-            "OCR process completed, but output PDF was not found:\n" +
-            outputPath,
-        });
-        return;
-      }
-
-      if (!fs.existsSync(outputPath)) {
-        resolve({
-          success: false,
-          message:
-            "OCR process completed, but output PDF was not found:\n" +
-            outputPath,
-        });
-        return;
-      }
-
-      const finalOutputPath = path.join(
-        data.projectPath,
-        "Export",
-        firstPdf.fileName.replace(/\.pdf$/i, "_searchable_compressed.pdf")
-      );
-
-      if (fs.existsSync(finalOutputPath)) {
-        fs.unlinkSync(finalOutputPath);
-      }
-
-      const gsProfiles = {
-        low: "/prepress",
-        medium: "/ebook",
-        high: "/screen",
-        maximum: "/screen",
-      };
-
-      const gsProfile = gsProfiles[data.compression || "medium"] || "/ebook";
-
-      const gsArgs = [
-        "-d",
-        "Ubuntu-24.04",
-        "--",
-        "gs",
-        "-sDEVICE=pdfwrite",
-        "-dCompatibilityLevel=1.4",
-        `-dPDFSETTINGS=${gsProfile}`,
-        "-dNOPAUSE",
-        "-dQUIET",
-        "-dBATCH",
-        `-sOutputFile=${windowsPathToWslPath(finalOutputPath)}`,
-        windowsPathToWslPath(outputPath),
-      ];
-
+  const runSpawn = (command, args, logLabel) => {
+    return new Promise((resolve) => {
       fs.appendFileSync(
         logPath,
-        `\n\nGHOSTSCRIPT COMMAND:\nwsl.exe ${gsArgs.join(" ")}\n`,
+        `\n\n${logLabel}:\n${command} ${args.join(" ")}\n\n`,
         "utf-8"
       );
 
-      const gs = spawn("wsl.exe", gsArgs, {
-        windowsHide: true,
-      });
+      const child = spawn(command, args, { windowsHide: true });
 
-      gs.stdout.on("data", (chunk) => {
+      child.stdout.on("data", (chunk) => {
         fs.appendFileSync(logPath, chunk.toString(), "utf-8");
       });
 
-      gs.stderr.on("data", (chunk) => {
+      child.stderr.on("data", (chunk) => {
         fs.appendFileSync(logPath, chunk.toString(), "utf-8");
       });
 
-      gs.on("error", (error) => {
-        fs.appendFileSync(logPath, `\nGHOSTSCRIPT ERROR:\n${error.message}`, "utf-8");
-
-        resolve({
-          success: false,
-          message: "Ghostscript compression failed: " + error.message,
-        });
+      child.on("error", (error) => {
+        fs.appendFileSync(logPath, `\nPROCESS ERROR: ${error.message}\n`, "utf-8");
+        resolve({ code: -1, error: error.message });
       });
 
-      gs.on("close", (gsCode) => {
-        fs.appendFileSync(logPath, `\nGHOSTSCRIPT EXIT CODE: ${gsCode}\n`, "utf-8");
-
-        if (gsCode !== 0 || !fs.existsSync(finalOutputPath)) {
-          resolve({
-            success: true,
-            message:
-              "OCR completed, but Ghostscript compression failed. Returning OCR PDF.",
-            outputPath,
-          });
-          return;
-        }
-
-        const inputSize = fs.statSync(inputPath).size;
-        const ocrSize = fs.statSync(outputPath).size;
-        const outputSize = fs.statSync(finalOutputPath).size;
-
-        const reductionPercent = ((inputSize - outputSize) / inputSize) * 100;
-
-        resolve({
-          success: true,
-          message: "OCR and compression completed successfully.",
-          outputPath: finalOutputPath,
-          inputSize,
-          ocrSize,
-          outputSize,
-          reductionPercent,
-        });
-      });
-      resolve({
-        success: true,
-        message: "OCR completed successfully.",
-        outputPath,
-        inputSize,
-        outputSize,
-        reductionPercent,
+      child.on("close", (code) => {
+        fs.appendFileSync(logPath, `\nPROCESS EXIT CODE: ${code}\n`, "utf-8");
+        resolve({ code });
       });
     });
-  });
+  };
+
+  const results = [];
+
+  for (const pdf of selectedDocuments) {
+    const inputPath = pdf.destinationPath;
+    const baseName = pdf.fileName.replace(/\.pdf$/i, "");
+
+    const searchablePath = path.join(exportFolder, `${baseName}_searchable.pdf`);
+    const compressedPath = path.join(exportFolder, `${baseName}_searchable_compressed.pdf`);
+    const sidecarTxtPath = path.join(exportFolder, `${baseName}_ocr_text.txt`);
+
+    for (const filePath of [searchablePath, compressedPath, sidecarTxtPath]) {
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    }
+
+    const inputWsl = windowsPathToWslPath(inputPath);
+    const searchableWsl = windowsPathToWslPath(searchablePath);
+    const sidecarWsl = windowsPathToWslPath(sidecarTxtPath);
+
+    const ocrArgs = [
+      "-d",
+      "Ubuntu-24.04",
+      "--",
+      "ocrmypdf",
+      "--force-ocr",
+      "--deskew",
+      "--oversample",
+      "300",
+      ...compressionArgs,
+      "--output-type",
+      "pdf",
+      "-l",
+      data.language || "tel",
+    ];
+
+    if (outputType === "searchable_pdf_txt") {
+      ocrArgs.push("--sidecar", sidecarWsl);
+    }
+
+    ocrArgs.push(inputWsl);
+    ocrArgs.push(searchableWsl);
+
+    const ocrResult = await runSpawn("wsl.exe", ocrArgs, `OCR COMMAND for ${pdf.fileName}`);
+
+    if (ocrResult.code !== 0 || !fs.existsSync(searchablePath)) {
+      results.push({
+        fileName: pdf.fileName,
+        success: false,
+        message: `OCR failed for ${pdf.fileName}`,
+      });
+      continue;
+    }
+
+    const gsProfiles = {
+      low: "/prepress",
+      medium: "/ebook",
+      high: "/screen",
+      maximum: "/screen",
+    };
+
+    const gsProfile = gsProfiles[compression] || "/ebook";
+
+    const gsArgs = [
+      "-d",
+      "Ubuntu-24.04",
+      "--",
+      "gs",
+      "-sDEVICE=pdfwrite",
+      "-dCompatibilityLevel=1.4",
+      `-dPDFSETTINGS=${gsProfile}`,
+      "-dNOPAUSE",
+      "-dQUIET",
+      "-dBATCH",
+      `-sOutputFile=${windowsPathToWslPath(compressedPath)}`,
+      windowsPathToWslPath(searchablePath),
+    ];
+
+    const gsResult = await runSpawn("wsl.exe", gsArgs, `GHOSTSCRIPT COMMAND for ${pdf.fileName}`);
+
+    const finalPath =
+      gsResult.code === 0 && fs.existsSync(compressedPath)
+        ? compressedPath
+        : searchablePath;
+
+    const inputSize = fs.statSync(inputPath).size;
+    const ocrSize = fs.statSync(searchablePath).size;
+    const outputSize = fs.statSync(finalPath).size;
+    const reductionPercent = ((inputSize - outputSize) / inputSize) * 100;
+
+    results.push({
+      fileName: pdf.fileName,
+      success: true,
+      outputPath: finalPath,
+      searchablePath,
+      compressedPath: fs.existsSync(compressedPath) ? compressedPath : undefined,
+      sidecarTxtPath: fs.existsSync(sidecarTxtPath) ? sidecarTxtPath : undefined,
+      inputSize,
+      ocrSize,
+      outputSize,
+      reductionPercent,
+    });
+  }
+
+  const successful = results.filter((r) => r.success);
+  const failed = results.filter((r) => !r.success);
+
+  if (successful.length === 0) {
+    return {
+      success: false,
+      message: "OCR failed for all selected PDFs. Check Logs/ocr-run.log",
+      results,
+    };
+  }
+
+  return {
+    success: true,
+    message:
+      failed.length === 0
+        ? `OCR completed for ${successful.length} PDF(s).`
+        : `OCR completed for ${successful.length} PDF(s), failed for ${failed.length}.`,
+    outputPath: successful[0].outputPath,
+    inputSize: successful[0].inputSize,
+    ocrSize: successful[0].ocrSize,
+    outputSize: successful[0].outputSize,
+    reductionPercent: successful[0].reductionPercent,
+    results,
+  };
+});
+ipcMain.handle("project:delete", async (_, data) => {
+  const recent = readRecentProjects();
+  const updated = recent.filter((p) => p.id !== data.projectId);
+  saveRecentProjects(updated);
+
+  if (data.deleteFiles && data.projectPath && fs.existsSync(data.projectPath)) {
+    fs.rmSync(data.projectPath, { recursive: true, force: true });
+  }
+
+  return updated;
 });
 
+ipcMain.handle("project:deleteDocument", async (_, data) => {
+  const documentsPath = path.join(data.projectPath, "documents.json");
+
+  if (!fs.existsSync(documentsPath)) return [];
+
+  const documents = JSON.parse(fs.readFileSync(documentsPath, "utf-8"));
+  const target = documents.find((doc) => doc.id === data.documentId);
+
+  if (target?.destinationPath && fs.existsSync(target.destinationPath)) {
+    fs.unlinkSync(target.destinationPath);
+  }
+
+  const updated = documents.filter((doc) => doc.id !== data.documentId);
+  fs.writeFileSync(documentsPath, JSON.stringify(updated, null, 2), "utf-8");
+
+  return updated;
+});
+
+ipcMain.handle("project:deleteExport", async (_, data) => {
+  if (data.filePath && fs.existsSync(data.filePath)) {
+    fs.unlinkSync(data.filePath);
+  }
+
+  const exportFolder = path.join(data.projectPath, "Export");
+
+  if (!fs.existsSync(exportFolder)) return [];
+
+  return fs
+    .readdirSync(exportFolder)
+    .filter(
+      (file) =>
+        file.toLowerCase().endsWith(".pdf") ||
+        file.toLowerCase().endsWith(".txt")
+    )
+    .map((file) => {
+      const fullPath = path.join(exportFolder, file);
+      const stat = fs.statSync(fullPath);
+
+      return {
+        fileName: file,
+        filePath: fullPath,
+        size: stat.size,
+        createdAt: stat.birthtime.toISOString(),
+        modifiedAt: stat.mtime.toISOString(),
+      };
+    });
+});
 app.whenReady().then(createWindow);
 
 app.on("window-all-closed", () => {

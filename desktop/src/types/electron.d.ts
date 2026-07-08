@@ -63,6 +63,8 @@ declare global {
                 projectPath: string;
                 language: string;
                 compression?: string;
+                outputType?: string;
+                documentIds?: number[];
             }) => Promise<{
                 success: boolean;
                 message: string;
@@ -71,10 +73,45 @@ declare global {
                 ocrSize?: number;
                 outputSize?: number;
                 reductionPercent?: number;
-
+                results?: {
+                    fileName: string;
+                    success: boolean;
+                    message?: string;
+                    outputPath?: string;
+                    searchablePath?: string;
+                    compressedPath?: string;
+                    sidecarTxtPath?: string;
+                    inputSize?: number;
+                    ocrSize?: number;
+                    outputSize?: number;
+                    reductionPercent?: number;
+                }[];
             }>;
             listProjectExports: (data: {
                 projectPath: string;
+            }) => Promise<
+                {
+                    fileName: string;
+                    filePath: string;
+                    size: number;
+                    createdAt: string;
+                    modifiedAt: string;
+                }[]
+            >;
+            deleteProject: (data: {
+                projectId: number;
+                projectPath?: string;
+                deleteFiles: boolean;
+            }) => Promise<ProjectInfo[]>;
+
+            deleteProjectDocument: (data: {
+                projectPath: string;
+                documentId: number;
+            }) => Promise<ImportedDocument[]>;
+
+            deleteProjectExport: (data: {
+                projectPath: string;
+                filePath: string;
             }) => Promise<
                 {
                     fileName: string;
