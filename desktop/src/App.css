@@ -20,7 +20,7 @@ body {
 .sidebar {
   width: 290px;
   padding: 22px 18px;
-  background: rgba(255,255,255,0.78);
+  background: rgba(255, 255, 255, 0.78);
   border-right: 1px solid #f1d7b8;
   backdrop-filter: blur(14px);
 }
@@ -94,7 +94,7 @@ nav span {
   padding: 20px;
   border: 1px solid #f1d7b8;
   border-radius: 14px;
-  background: rgba(255,255,255,0.72);
+  background: rgba(255, 255, 255, 0.72);
 }
 
 .circle {
@@ -194,7 +194,7 @@ nav span {
 .primary {
   color: white;
   background: linear-gradient(180deg, #fb8500, #e85d04);
-  box-shadow: 0 8px 18px rgba(232,93,4,0.28);
+  box-shadow: 0 8px 18px rgba(232, 93, 4, 0.28);
 }
 
 .secondary {
@@ -219,10 +219,10 @@ nav span {
 .stat,
 .panel,
 .quote {
-  background: rgba(255,255,255,0.78);
+  background: rgba(255, 255, 255, 0.78);
   border: 1px solid #f1d7b8;
   border-radius: 12px;
-  box-shadow: 0 10px 24px rgba(111,63,18,0.08);
+  box-shadow: 0 10px 24px rgba(111, 63, 18, 0.08);
 }
 
 .stat {
@@ -252,10 +252,21 @@ nav span {
   color: #fb8500;
 }
 
-.blue { color: #0ea5e9; }
-.green { color: #16a34a; }
-.orange { color: #f97316; }
-.purple { color: #9333ea; }
+.blue {
+  color: #0ea5e9;
+}
+
+.green {
+  color: #16a34a;
+}
+
+.orange {
+  color: #f97316;
+}
+
+.purple {
+  color: #9333ea;
+}
 
 .content-grid {
   display: grid;
@@ -365,8 +376,9 @@ small {
   padding: 34px;
   color: #bc4b00;
   background:
-    linear-gradient(135deg, rgba(255,255,255,0.78), rgba(255,226,163,0.58));
+    linear-gradient(135deg, rgba(255, 255, 255, 0.78), rgba(255, 226, 163, 0.58));
 }
+
 nav a {
   text-decoration: none;
   color: #23140c;
@@ -457,6 +469,7 @@ nav a:hover {
   border: 1px solid #f1d7b8;
   border-radius: 8px;
 }
+
 .modal-backdrop {
   position: fixed;
   inset: 0;
@@ -471,7 +484,7 @@ nav a:hover {
   background: #fffaf0;
   border: 1px solid #f1d7b8;
   border-radius: 18px;
-  box-shadow: 0 30px 80px rgba(111,63,18,0.28);
+  box-shadow: 0 30px 80px rgba(111, 63, 18, 0.28);
   overflow: hidden;
 }
 
@@ -530,6 +543,7 @@ nav a:hover {
   justify-content: flex-end;
   gap: 12px;
 }
+
 .small-button {
   border: 1px solid #ffc483;
   background: #fff8ec;
@@ -547,4 +561,169 @@ nav a:hover {
 .small-button.danger {
   border-color: #fecaca;
   color: #dc2626;
+}
+
+
+
+.project-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 20px;
+}
+
+.info-list {
+  padding: 24px;
+  line-height: 1.8;
+}
+
+.file-button {
+  display: inline-block;
+  cursor: pointer;
+}
+
+.file-button input {
+  display: none;
+}
+
+.path-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+}
+
+.ocr-progress-panel {
+  margin-bottom: 20px;
+}
+
+.ocr-progress-body {
+  padding: 22px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.spinner {
+  width: 34px;
+  height: 34px;
+  border: 4px solid #ffe2a3;
+  border-top-color: #e85d04;
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+.progress-track {
+  height: 8px;
+  background: #fff0cf;
+  overflow: hidden;
+}
+
+.progress-indeterminate {
+  height: 100%;
+  width: 35%;
+  background: linear-gradient(90deg, #fb8500, #e85d04);
+  animation: progressMove 1.3s ease-in-out infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes progressMove {
+  0% {
+    margin-left: -35%;
+  }
+
+  100% {
+    margin-left: 100%;
+  }
+}
+
+button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.compression-select {
+  padding: 12px;
+  border: 1px solid #ffc483;
+  border-radius: 8px;
+  background: white;
+  color: #7c2d12;
+  margin-right: 8px;
+}
+
+
+
+
+
+.project-title {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 24px;
+  align-items: start;
+  margin-bottom: 24px;
+}
+
+.project-title h1 {
+  margin: 14px 0 6px;
+  color: #e85d04;
+  font-size: 42px;
+  line-height: 1.05;
+  max-width: 520px;
+  word-break: break-word;
+}
+
+.project-title p {
+  margin: 0;
+  color: #7c6a5b;
+  max-width: 520px;
+  word-break: break-word;
+}
+
+.project-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  min-width: 230px;
+  justify-items: stretch;
+}
+
+.project-actions button,
+.project-actions select {
+  width: 100%;
+}
+
+.ocr-action-group {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #ffd7a3;
+  border-radius: 12px;
+  background: #fffaf2;
+}
+
+.compression-control {
+  display: grid;
+  gap: 5px;
+}
+
+.compression-control label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #9a3412;
+}
+
+.compression-control select {
+  height: 42px;
+  padding: 0 10px;
+  border: 1px solid #fdba74;
+  border-radius: 8px;
+  background: white;
+  color: #7c2d12;
+}
+
+.run-ocr-button {
+  height: 44px;
 }

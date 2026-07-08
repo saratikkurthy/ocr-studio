@@ -9,6 +9,7 @@ import PipelinesPage from "./pages/Pipelines/PipelinesPage";
 import ExportPage from "./pages/Export/ExportPage";
 import LogsPage from "./pages/Logs/LogsPage";
 import SettingsPage from "./pages/Settings/SettingsPage";
+import ProjectDetailPage from "./pages/Projects/ProjectDetailPage";
 
 import "./App.css";
 
@@ -25,6 +26,7 @@ function App() {
           <Route path="/export" element={<ExportPage />} />
           <Route path="/logs" element={<LogsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/projects/:id" element={<ProjectDetailPage />} />
         </Routes>
       </MainLayout>
     </HashRouter>

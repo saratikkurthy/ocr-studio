@@ -2,18 +2,24 @@ import { useEffect, useState } from "react";
 import CreateProjectModal from "../../components/CreateProjectModal";
 import { addProject, getProjects } from "../../services/projectStorage";
 import type { Project } from "../../services/projectStorage";
+import { getLanguageLabel } from "../../services/languageService";
 
 export default function DashboardPage() {
   const [showCreateProject, setShowCreateProject] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
 
+  const loadProjects = async () => {
+    const data = await getProjects();
+    setProjects(data);
+  };
+
   useEffect(() => {
-    setProjects(getProjects());
+    loadProjects();
   }, []);
 
-  const handleCreateProject = (project: any) => {
-    addProject(project);
-    setProjects(getProjects());
+  const handleCreateProject = async (project: any) => {
+    await addProject(project);
+    await loadProjects();
   };
 
   return (
@@ -38,11 +44,7 @@ export default function DashboardPage() {
       </section>
 
       <section className="stats">
-        <div className="stat">
-          <h3>Projects</h3>
-          <strong>{projects.length}</strong>
-          <p>Total Projects</p>
-        </div>
+        <div className="stat"><h3>Projects</h3><strong>{projects.length}</strong><p>Total Projects</p></div>
         <div className="stat"><h3>Running Jobs</h3><strong>0</strong><p>In Progress</p></div>
         <div className="stat"><h3>Completed</h3><strong>0</strong><p>Successfully Done</p></div>
         <div className="stat"><h3>Pending</h3><strong>0</strong><p>Waiting in Queue</p></div>
@@ -70,10 +72,10 @@ export default function DashboardPage() {
               {projects.slice(0, 5).map((project) => (
                 <tr key={project.id}>
                   <td>{project.name}<br /><small>{project.description || "No description"}</small></td>
-                  <td>{project.language}</td>
+                  <td>{getLanguageLabel(project.language)}</td>
                   <td>{project.workflow}</td>
                   <td><span className="badge pending">{project.status}</span></td>
-                  <td>{project.createdAt}</td>
+                  <td>{new Date(project.createdAt).toLocaleString()}</td>
                 </tr>
               ))}
             </tbody>

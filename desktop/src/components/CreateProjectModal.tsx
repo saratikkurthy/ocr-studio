@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { OCR_LANGUAGES } from "../services/languageService";
 
 type Props = {
   open: boolean;
@@ -8,20 +9,42 @@ type Props = {
     description: string;
     language: string;
     workflow: string;
+    workspacePath: string;
+    compression: string;
   }) => void;
 };
 
 export default function CreateProjectModal({ open, onClose, onCreate }: Props) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [language, setLanguage] = useState("English");
+  const [language, setLanguage] = useState("tel+san+hin+eng");
   const [workflow, setWorkflow] = useState("Basic OCR");
+  const [workspacePath, setWorkspacePath] = useState("");
+  const [compression, setCompression] = useState("medium");
 
   if (!open) return null;
+
+  const chooseWorkspace = async () => {
+    if (!window.ocrStudio) {
+      alert("Electron preload is not loaded. Restart npm run dev.");
+      return;
+    }
+
+    const selected = await window.ocrStudio.selectWorkspaceFolder();
+
+    if (selected) {
+      setWorkspacePath(selected);
+    }
+  };
 
   const handleCreate = () => {
     if (!name.trim()) {
       alert("Project name is required");
+      return;
+    }
+
+    if (!workspacePath.trim()) {
+      alert("Please choose a workspace folder");
       return;
     }
 
@@ -30,12 +53,15 @@ export default function CreateProjectModal({ open, onClose, onCreate }: Props) {
       description,
       language,
       workflow,
+      workspacePath,
+      compression,
     });
-
+    setCompression("medium");
     setName("");
     setDescription("");
-    setLanguage("English");
+    setLanguage("tel+san+hin+eng");
     setWorkflow("Basic OCR");
+    setWorkspacePath("");
     onClose();
   };
 
@@ -67,15 +93,38 @@ export default function CreateProjectModal({ open, onClose, onCreate }: Props) {
           </label>
 
           <label>
-            OCR Language
-            <select value={language} onChange={(e) => setLanguage(e.target.value)}>
-              <option>English</option>
-              <option>Telugu</option>
-              <option>Hindi</option>
-              <option>Sanskrit</option>
-            </select>
+            Workspace Folder
+            <div className="path-row">
+              <input
+                value={workspacePath}
+                readOnly
+                placeholder="Choose where projects should be created"
+              />
+              <button className="secondary" onClick={chooseWorkspace}>
+                Browse
+              </button>
+            </div>
           </label>
 
+          <label>
+            OCR Language
+            <select value={language} onChange={(e) => setLanguage(e.target.value)}>
+              {OCR_LANGUAGES.map((language) => (
+                <option key={language.code} value={language.code}>
+                  {language.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            PDF Compression
+            <select value={compression} onChange={(e) => setCompression(e.target.value)}>
+              <option value="low">Low - Best Quality</option>
+              <option value="medium">Medium - Balanced</option>
+              <option value="high">High - Smaller PDF</option>
+              <option value="maximum">Maximum - Smallest PDF</option>
+            </select>
+          </label>
           <label>
             Workflow Template
             <select value={workflow} onChange={(e) => setWorkflow(e.target.value)}>
@@ -88,8 +137,12 @@ export default function CreateProjectModal({ open, onClose, onCreate }: Props) {
         </div>
 
         <div className="modal-footer">
-          <button className="secondary" onClick={onClose}>Cancel</button>
-          <button className="primary" onClick={handleCreate}>Create Project</button>
+          <button className="secondary" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="primary" onClick={handleCreate}>
+            Create Project
+          </button>
         </div>
       </div>
     </div>
