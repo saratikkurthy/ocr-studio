@@ -749,3 +749,7 @@ td:last-child {
 .small-button.danger:hover {
   background: #fecaca;
 }
+.project-stats {
+  grid-template-columns: repeat(4, 1fr);
+  margin-bottom: 22px;
+}

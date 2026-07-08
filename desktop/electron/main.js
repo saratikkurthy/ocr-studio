@@ -528,6 +528,81 @@ ipcMain.handle("project:deleteExport", async (_, data) => {
       };
     });
 });
+ipcMain.handle("pdf:verifyTextLayer", async (_, data) => {
+  const pdfPath = data.filePath;
+
+  if (!pdfPath || !fs.existsSync(pdfPath)) {
+    return {
+      success: false,
+      message: "PDF file not found.",
+      characterCount: 0,
+      sampleText: "",
+    };
+  }
+
+  const pdfWslPath = windowsPathToWslPath(pdfPath);
+
+  const args = [
+    "-d",
+    "Ubuntu-24.04",
+    "--",
+    "pdftotext",
+    pdfWslPath,
+    "-",
+  ];
+
+  return new Promise((resolve) => {
+    const child = spawn("wsl.exe", args, {
+      windowsHide: true,
+    });
+
+    let output = "";
+    let errorOutput = "";
+
+    child.stdout.on("data", (chunk) => {
+      output += chunk.toString();
+    });
+
+    child.stderr.on("data", (chunk) => {
+      errorOutput += chunk.toString();
+    });
+
+    child.on("error", (error) => {
+      resolve({
+        success: false,
+        message: error.message,
+        characterCount: 0,
+        sampleText: "",
+      });
+    });
+
+    child.on("close", (code) => {
+      const cleaned = output.trim();
+      const characterCount = cleaned.length;
+
+      if (code !== 0) {
+        resolve({
+          success: false,
+          message: errorOutput || `pdftotext failed with exit code ${code}`,
+          characterCount: 0,
+          sampleText: "",
+        });
+        return;
+      }
+
+      resolve({
+        success: true,
+        message:
+          characterCount > 0
+            ? "Text layer found."
+            : "No usable text layer found.",
+        characterCount,
+        sampleText: cleaned.slice(0, 500),
+      });
+    });
+  });
+});
+
 app.whenReady().then(createWindow);
 
 app.on("window-all-closed", () => {

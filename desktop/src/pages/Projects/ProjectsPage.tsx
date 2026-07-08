@@ -24,6 +24,19 @@ export default function ProjectsPage() {
     await loadProjects();
   };
 
+  const handleDeleteProject = async (project: Project) => {
+    const deleteFiles = confirm(
+      `Delete project "${project.name}"?\n\nClick OK to delete the project AND its files from disk.\nClick Cancel to only remove it from the recent projects list.`
+    );
+
+    const updated = await window.ocrStudio.deleteProject({
+      projectId: project.id,
+      projectPath: project.projectPath,
+      deleteFiles,
+    });
+
+    setProjects(updated);
+  };
   return (
     <>
       <div className="panel">
@@ -62,10 +75,17 @@ export default function ProjectsPage() {
                     >
                       Open
                     </button>
+                    <button
+                      className="small-button danger"
+                      onClick={() => handleDeleteProject(project)}
+                    >
+                      Delete
+                    </button>
                   </td>
                 </tr>
               ))}
             </tbody>
+
           </table>
         )}
       </div>

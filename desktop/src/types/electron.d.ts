@@ -98,6 +98,14 @@ declare global {
                     modifiedAt: string;
                 }[]
             >;
+            verifyPdfTextLayer: (data: {
+                filePath: string;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                characterCount: number;
+                sampleText: string;
+            }>;
             deleteProject: (data: {
                 projectId: number;
                 projectPath?: string;

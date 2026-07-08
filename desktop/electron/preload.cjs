@@ -14,4 +14,5 @@ contextBridge.exposeInMainWorld("ocrStudio", {
   deleteProject: (data) => ipcRenderer.invoke("project:delete", data),
   deleteProjectDocument: (data) => ipcRenderer.invoke("project:deleteDocument", data),
   deleteProjectExport: (data) => ipcRenderer.invoke("project:deleteExport", data),
+  verifyPdfTextLayer: (data) => ipcRenderer.invoke("pdf:verifyTextLayer", data),
 });
