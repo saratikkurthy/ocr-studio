@@ -34,7 +34,18 @@ export default function ProjectDetailPage() {
     const [selectedCompression, setSelectedCompression] = useState("medium");
     const [outputType, setOutputType] = useState("searchable_pdf");
     const [selectedDocumentIds, setSelectedDocumentIds] = useState<number[]>([]);
-
+    const [ocrProgress, setOcrProgress] = useState<{
+        fileName: string;
+        currentPage?: number;
+        totalPages?: number;
+        percent?: number;
+        message: string;
+    } | null>(null);
+    const cancelOcr = async () => {
+        const result = await window.ocrStudio.cancelOcr();
+        setOcrMessage(result.message);
+        setOcrRunning(false);
+    };
     const formatSize = (bytes: number) => {
         if (bytes < 1024) return `${bytes} B`;
         if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -66,7 +77,14 @@ export default function ProjectDetailPage() {
             `Sample:\n${result.sampleText || "No text sample available."}`
         );
     };
+    useEffect(() => {
+        if (!window.ocrStudio?.onOcrProgress) return;
 
+        window.ocrStudio.onOcrProgress((data) => {
+            setOcrProgress(data);
+            setOcrMessage(`${data.fileName}: ${data.message}`);
+        });
+    }, []);
     useEffect(() => {
         async function loadProject() {
             const data = await getProjectById(Number(id));
@@ -291,11 +309,19 @@ export default function ProjectDetailPage() {
                     <div className="panel-header">
                         <h2>OCR Running</h2>
                     </div>
-
+                    <div style={{ padding: "0 22px 22px" }}>
+                        <button className="small-button danger" onClick={cancelOcr}>
+                            Cancel OCR
+                        </button>
+                    </div>
                     <div className="ocr-progress-body">
                         <div className="spinner"></div>
                         <div>
-                            <strong>{ocrMessage}</strong>
+                            <strong>
+                                {ocrProgress
+                                    ? `${ocrProgress.fileName} — ${ocrProgress.message}`
+                                    : ocrMessage}
+                            </strong>
                             <p>Please keep OCR Studio open until processing completes.</p>
                         </div>
                     </div>

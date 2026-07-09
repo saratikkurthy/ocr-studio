@@ -129,6 +129,19 @@ declare global {
                     modifiedAt: string;
                 }[]
             >;
+            cancelOcr: () => Promise<{
+                success: boolean;
+                message: string;
+            }>;
+            onOcrProgress: (
+                callback: (data: {
+                    fileName: string;
+                    currentPage?: number;
+                    totalPages?: number;
+                    percent?: number;
+                    message: string;
+                }) => void
+            ) => void;
         };
     }
 }

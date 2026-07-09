@@ -76,7 +76,7 @@ function runCommand(command) {
     });
   });
 }
-
+let activeOcrProcess = null;
 ipcMain.handle("workspace:selectFolder", async () => {
   const result = await dialog.showOpenDialog({
     title: "Select OCR Studio Workspace",
@@ -247,8 +247,29 @@ ipcMain.handle("ocr:checkTools", async () => {
     ocrmypdf,
   };
 });
+async function getPdfPageCount(inputWslPath) {
+  return new Promise((resolve) => {
+    const args = ["-d", "Ubuntu-24.04", "--", "pdfinfo", inputWslPath];
+    const child = spawn("wsl.exe", args, { windowsHide: true });
 
-ipcMain.handle("ocr:runProject", async (_, data) => {
+    let output = "";
+
+    child.stdout.on("data", (chunk) => {
+      output += chunk.toString();
+    });
+
+    child.on("close", () => {
+      const match = output.match(/Pages:\s+(\d+)/);
+      resolve(match ? Number(match[1]) : undefined);
+    });
+
+    child.on("error", () => {
+      resolve(undefined);
+    });
+  });
+}
+
+ipcMain.handle("ocr:runProject", async (event, data) => {
   const documentsPath = path.join(data.projectPath, "documents.json");
 
   if (!fs.existsSync(documentsPath)) {
@@ -312,7 +333,7 @@ ipcMain.handle("ocr:runProject", async (_, data) => {
       ],
     }[compression] || ["--optimize", "2", "--jpeg-quality", "85", "--png-quality", "85"];
 
-  const runSpawn = (command, args, logLabel) => {
+  const runSpawn = (command, args, logLabel, progressFileName = "", totalPages) => {
     return new Promise((resolve) => {
       fs.appendFileSync(
         logPath,
@@ -321,22 +342,62 @@ ipcMain.handle("ocr:runProject", async (_, data) => {
       );
 
       const child = spawn(command, args, { windowsHide: true });
+      activeOcrProcess = child;
 
       child.stdout.on("data", (chunk) => {
-        fs.appendFileSync(logPath, chunk.toString(), "utf-8");
+        const text = chunk.toString();
+        fs.appendFileSync(logPath, text, "utf-8");
       });
 
       child.stderr.on("data", (chunk) => {
-        fs.appendFileSync(logPath, chunk.toString(), "utf-8");
+        const text = chunk.toString();
+        fs.appendFileSync(logPath, text, "utf-8");
+
+        const pageMatch = text.match(/^\s*(\d+)\s+\[tesseract\]/m);
+
+        if (pageMatch) {
+          const currentPage = Number(pageMatch[1]);
+          const percent =
+            totalPages && currentPage
+              ? Math.min(100, Math.round((currentPage / totalPages) * 100))
+              : undefined;
+
+          event.sender.send("ocr:progress", {
+            fileName: progressFileName,
+            currentPage,
+            totalPages,
+            percent,
+            message: totalPages
+              ? `Processing page ${currentPage} of ${totalPages} — ${percent}%`
+              : `Processing page ${currentPage}`,
+          });
+        } else if (text.includes("Postprocessing")) {
+          event.sender.send("ocr:progress", {
+            fileName: progressFileName,
+            message: "Postprocessing PDF...",
+          });
+        }
       });
 
       child.on("error", (error) => {
         fs.appendFileSync(logPath, `\nPROCESS ERROR: ${error.message}\n`, "utf-8");
+
+        event.sender.send("ocr:progress", {
+          fileName: progressFileName,
+          message: "OCR process error.",
+        });
+
         resolve({ code: -1, error: error.message });
       });
 
       child.on("close", (code) => {
         fs.appendFileSync(logPath, `\nPROCESS EXIT CODE: ${code}\n`, "utf-8");
+
+        event.sender.send("ocr:progress", {
+          fileName: progressFileName,
+          message: code === 0 ? "OCR step completed." : `OCR failed with code ${code}.`,
+        });
+        activeOcrProcess = null;
         resolve({ code });
       });
     });
@@ -357,6 +418,18 @@ ipcMain.handle("ocr:runProject", async (_, data) => {
     }
 
     const inputWsl = windowsPathToWslPath(inputPath);
+    const totalPages = await getPdfPageCount(inputWsl);
+
+    event.sender.send("ocr:progress", {
+      fileName: pdf.fileName,
+      totalPages,
+      currentPage: 0,
+      percent: 0,
+      message: totalPages
+        ? `Starting OCR: 0 of ${totalPages} pages`
+        : "Starting OCR...",
+    });
+
     const searchableWsl = windowsPathToWslPath(searchablePath);
     const sidecarWsl = windowsPathToWslPath(sidecarTxtPath);
 
@@ -383,7 +456,13 @@ ipcMain.handle("ocr:runProject", async (_, data) => {
     ocrArgs.push(inputWsl);
     ocrArgs.push(searchableWsl);
 
-    const ocrResult = await runSpawn("wsl.exe", ocrArgs, `OCR COMMAND for ${pdf.fileName}`);
+    const ocrResult = await runSpawn(
+      "wsl.exe",
+      ocrArgs,
+      `OCR COMMAND for ${pdf.fileName}`,
+      pdf.fileName,
+      totalPages
+    );
 
     if (ocrResult.code !== 0 || !fs.existsSync(searchablePath)) {
       results.push({
@@ -418,7 +497,13 @@ ipcMain.handle("ocr:runProject", async (_, data) => {
       windowsPathToWslPath(searchablePath),
     ];
 
-    const gsResult = await runSpawn("wsl.exe", gsArgs, `GHOSTSCRIPT COMMAND for ${pdf.fileName}`);
+    const gsResult = await runSpawn(
+      "wsl.exe",
+      gsArgs,
+      `GHOSTSCRIPT COMMAND for ${pdf.fileName}`,
+      pdf.fileName,
+      totalPages
+    );
 
     const finalPath =
       gsResult.code === 0 && fs.existsSync(compressedPath)
@@ -601,6 +686,22 @@ ipcMain.handle("pdf:verifyTextLayer", async (_, data) => {
       });
     });
   });
+});
+ipcMain.handle("ocr:cancel", async () => {
+  if (!activeOcrProcess) {
+    return {
+      success: false,
+      message: "No OCR job is currently running.",
+    };
+  }
+
+  activeOcrProcess.kill("SIGTERM");
+  activeOcrProcess = null;
+
+  return {
+    success: true,
+    message: "OCR job cancellation requested.",
+  };
 });
 
 app.whenReady().then(createWindow);
