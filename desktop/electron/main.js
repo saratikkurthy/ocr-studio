@@ -269,7 +269,42 @@ async function getPdfPageCount(inputWslPath) {
   });
 }
 
+function getOcrJobsPath(projectPath) {
+  return path.join(projectPath, "Logs", "ocr-jobs.json");
+}
+
+function readOcrJobs(projectPath) {
+  const jobsPath = getOcrJobsPath(projectPath);
+
+  if (!fs.existsSync(jobsPath)) {
+    return [];
+  }
+
+  return JSON.parse(fs.readFileSync(jobsPath, "utf-8"));
+}
+
+function saveOcrJobs(projectPath, jobs) {
+  const logsFolder = path.join(projectPath, "Logs");
+  fs.mkdirSync(logsFolder, { recursive: true });
+
+  fs.writeFileSync(
+    getOcrJobsPath(projectPath),
+    JSON.stringify(jobs, null, 2),
+    "utf-8"
+  );
+}
+
+function addOcrJob(projectPath, job) {
+  const jobs = readOcrJobs(projectPath);
+  const updated = [job, ...jobs];
+
+  saveOcrJobs(projectPath, updated);
+
+  return updated;
+}
+
 ipcMain.handle("ocr:runProject", async (event, data) => {
+  const jobStartedAt = new Date();
   const documentsPath = path.join(data.projectPath, "documents.json");
 
   if (!fs.existsSync(documentsPath)) {
@@ -465,10 +500,24 @@ ipcMain.handle("ocr:runProject", async (event, data) => {
     );
 
     if (ocrResult.code !== 0 || !fs.existsSync(searchablePath)) {
+      const jobEndedAt = new Date();
+
+      const failedJob = {
+        id: Date.now() + Math.floor(Math.random() * 10000),
+        fileName: pdf.fileName,
+        status: "Failed",
+        startedAt: jobStartedAt.toISOString(),
+        endedAt: jobEndedAt.toISOString(),
+        durationMs: jobEndedAt.getTime() - jobStartedAt.getTime(),
+        message: `OCR failed for ${pdf.fileName}`,
+      };
+
+      addOcrJob(data.projectPath, failedJob);
+
       results.push({
         fileName: pdf.fileName,
         success: false,
-        message: `OCR failed for ${pdf.fileName}`,
+        message: failedJob.message,
       });
       continue;
     }
@@ -514,6 +563,24 @@ ipcMain.handle("ocr:runProject", async (event, data) => {
     const ocrSize = fs.statSync(searchablePath).size;
     const outputSize = fs.statSync(finalPath).size;
     const reductionPercent = ((inputSize - outputSize) / inputSize) * 100;
+    const jobEndedAt = new Date();
+
+    const completedJob = {
+      id: Date.now() + Math.floor(Math.random() * 10000),
+      fileName: pdf.fileName,
+      status: "Completed",
+      startedAt: jobStartedAt.toISOString(),
+      endedAt: jobEndedAt.toISOString(),
+      durationMs: jobEndedAt.getTime() - jobStartedAt.getTime(),
+      outputPath: finalPath,
+      inputSize,
+      ocrSize,
+      outputSize,
+      reductionPercent,
+      sidecarTxtPath: fs.existsSync(sidecarTxtPath) ? sidecarTxtPath : undefined,
+    };
+
+    addOcrJob(data.projectPath, completedJob);
 
     results.push({
       fileName: pdf.fileName,
@@ -702,6 +769,10 @@ ipcMain.handle("ocr:cancel", async () => {
     success: true,
     message: "OCR job cancellation requested.",
   };
+});
+
+ipcMain.handle("project:listOcrJobs", async (_, data) => {
+  return readOcrJobs(data.projectPath);
 });
 
 app.whenReady().then(createWindow);

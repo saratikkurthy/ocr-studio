@@ -21,6 +21,22 @@ type ProjectExport = {
     createdAt: string;
     modifiedAt: string;
 };
+type OcrJob = {
+    id: number;
+    fileName: string;
+    status: string;
+    startedAt: string;
+    endedAt: string;
+    durationMs: number;
+    message?: string;
+    outputPath?: string;
+    inputSize?: number;
+    ocrSize?: number;
+    outputSize?: number;
+    reductionPercent?: number;
+    sidecarTxtPath?: string;
+};
+
 
 export default function ProjectDetailPage() {
     const { id } = useParams();
@@ -34,6 +50,7 @@ export default function ProjectDetailPage() {
     const [selectedCompression, setSelectedCompression] = useState("medium");
     const [outputType, setOutputType] = useState("searchable_pdf");
     const [selectedDocumentIds, setSelectedDocumentIds] = useState<number[]>([]);
+    const [ocrJobs, setOcrJobs] = useState<OcrJob[]>([]);
     const [ocrProgress, setOcrProgress] = useState<{
         fileName: string;
         currentPage?: number;
@@ -51,6 +68,10 @@ export default function ProjectDetailPage() {
         if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
         return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
     };
+    const loadOcrJobs = async (projectPath: string) => {
+        const jobs = await window.ocrStudio.listOcrJobs({ projectPath });
+        setOcrJobs(jobs);
+    };
 
     const loadExports = async (projectPath: string) => {
         const exported = await window.ocrStudio.listProjectExports({ projectPath });
@@ -60,6 +81,17 @@ export default function ProjectDetailPage() {
     const loadDocuments = async (projectPath: string) => {
         const docs = await window.ocrStudio.listProjectDocuments({ projectPath });
         setDocuments(docs);
+    };
+    const retryJob = async (job: OcrJob) => {
+        const matchingDoc = documents.find((doc) => doc.fileName === job.fileName);
+
+        if (!matchingDoc) {
+            alert("Original imported PDF was not found. Please import it again.");
+            return;
+        }
+
+        setSelectedDocumentIds([matchingDoc.id]);
+        alert(`Selected for retry:\n\n${matchingDoc.fileName}\n\nClick Run OCR.`);
     };
     const verifyTextLayer = async (file: ProjectExport) => {
         if (!file.fileName.toLowerCase().endsWith(".pdf")) {
@@ -97,6 +129,7 @@ export default function ProjectDetailPage() {
             if (data?.projectPath && window.ocrStudio) {
                 await loadDocuments(data.projectPath);
                 await loadExports(data.projectPath);
+                await loadOcrJobs(data.projectPath);
             }
         }
 
@@ -115,8 +148,17 @@ export default function ProjectDetailPage() {
 
         setDocuments(imported);
         await loadExports(project.projectPath);
+        await loadOcrJobs(project.projectPath);
     };
 
+    const formatDuration = (ms: number) => {
+        const seconds = Math.round(ms / 1000);
+        const minutes = Math.floor(seconds / 60);
+        const remainingSeconds = seconds % 60;
+
+        if (minutes === 0) return `${remainingSeconds}s`;
+        return `${minutes}m ${remainingSeconds}s`;
+    };
     const openInputFolder = async () => {
         if (!project?.projectPath) {
             alert("Project path is missing.");
@@ -504,6 +546,84 @@ export default function ProjectDetailPage() {
                             </tbody>
                         </table>
                     )}
+                    <div className="panel">
+                        <div className="panel-header">
+                            <h2>OCR Job History</h2>
+                        </div>
+
+                        {ocrJobs.length === 0 ? (
+                            <div className="empty">No OCR jobs yet.</div>
+                        ) : (
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>File</th>
+                                        <th>Status</th>
+                                        <th>Started</th>
+                                        <th>Duration</th>
+                                        <th>Reduction</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+
+                                <tbody>
+                                    {ocrJobs.map((job) => (
+                                        <tr key={job.id}>
+                                            <td>{job.fileName}</td>
+                                            <td>
+                                                <span className={`badge ${job.status === "Completed" ? "completed" : "pending"}`}>
+                                                    {job.status}
+                                                </span>
+                                            </td>
+                                            <td>{new Date(job.startedAt).toLocaleString()}</td>
+                                            <td>{formatDuration(job.durationMs)}</td>
+                                            <td>
+                                                {job.reductionPercent !== undefined
+                                                    ? `${job.reductionPercent.toFixed(1)}%`
+                                                    : "—"}
+                                            </td>
+                                            <td>
+                                                {job.outputPath && (
+                                                    <button
+                                                        className="small-button"
+                                                        onClick={() => window.ocrStudio.openPath(job.outputPath!)}
+                                                    >
+                                                        Open Output
+                                                    </button>
+                                                )}
+                                                {job.sidecarTxtPath && (
+                                                    <button
+                                                        className="small-button"
+                                                        onClick={() => window.ocrStudio.openPath(job.sidecarTxtPath!)}
+                                                    >
+                                                        Open TXT
+                                                    </button>
+                                                )}
+                                                <button
+                                                    className="small-button"
+                                                    onClick={() => {
+                                                        if (!project?.projectPath) return;
+                                                        window.ocrStudio.openPath(`${project.projectPath}\\Logs\\ocr-run.log`);
+                                                    }}
+                                                >
+                                                    Open Log
+                                                </button>
+                                                {job.status !== "Completed" && (
+                                                    <button
+                                                        className="small-button"
+                                                        onClick={() => retryJob(job)}
+                                                    >
+                                                        Retry
+                                                    </button>
+                                                )}
+                                            </td>
+
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        )}
+                    </div>
                 </div>
             </section>
         </>

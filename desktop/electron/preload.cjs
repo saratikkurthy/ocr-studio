@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld("ocrStudio", {
   deleteProjectExport: (data) => ipcRenderer.invoke("project:deleteExport", data),
   verifyPdfTextLayer: (data) => ipcRenderer.invoke("pdf:verifyTextLayer", data),
   cancelOcr: () => ipcRenderer.invoke("ocr:cancel"),
+  listOcrJobs: (data) => ipcRenderer.invoke("project:listOcrJobs", data),
   onOcrProgress: (callback) => {
     ipcRenderer.removeAllListeners("ocr:progress");
     ipcRenderer.on("ocr:progress", (_event, data) => callback(data));

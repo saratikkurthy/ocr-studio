@@ -57,7 +57,25 @@ declare global {
             listProjectDocuments: (data: {
                 projectPath: string;
             }) => Promise<ImportedDocument[]>;
-
+            listOcrJobs: (data: {
+                projectPath: string;
+            }) => Promise<
+                {
+                    id: number;
+                    fileName: string;
+                    status: string;
+                    startedAt: string;
+                    endedAt: string;
+                    durationMs: number;
+                    message?: string;
+                    outputPath?: string;
+                    inputSize?: number;
+                    ocrSize?: number;
+                    outputSize?: number;
+                    reductionPercent?: number;
+                    sidecarTxtPath?: string;
+                }[]
+            >;
             openPath: (filePath: string) => Promise<string>;
             runOcrForProject: (data: {
                 projectPath: string;
