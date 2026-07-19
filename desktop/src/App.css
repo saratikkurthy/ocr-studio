@@ -799,3 +799,62 @@ td:last-child {
   max-width: 240px;
   color: #b91c1c;
 }
+.panel-description {
+    margin: 4px 0 0;
+    color: #78716c;
+    font-size: 13px;
+}
+
+.queue-panel {
+    margin-bottom: 24px;
+}
+
+.queue-message {
+    margin: 0 22px 18px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: #fff7ed;
+    color: #9a3412;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.queue-summary {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(110px, 1fr));
+    gap: 12px;
+    padding: 0 22px 20px;
+}
+
+.queue-summary > div {
+    padding: 12px;
+    border: 1px solid #fed7aa;
+    border-radius: 10px;
+    background: #fffaf5;
+}
+
+.queue-summary span {
+    display: block;
+    color: #78716c;
+    font-size: 12px;
+}
+
+.queue-summary strong {
+    display: block;
+    margin-top: 4px;
+    font-size: 22px;
+}
+
+.queue-error {
+    display: block;
+    max-width: 280px;
+    margin-top: 5px;
+    color: #b91c1c;
+    line-height: 1.35;
+}
+
+@media (max-width: 900px) {
+    .queue-summary {
+        grid-template-columns: repeat(2, minmax(110px, 1fr));
+    }
+}

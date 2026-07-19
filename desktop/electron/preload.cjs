@@ -17,6 +17,17 @@ contextBridge.exposeInMainWorld("ocrStudio", {
   verifyPdfTextLayer: (data) => ipcRenderer.invoke("pdf:verifyTextLayer", data),
   cancelOcr: () => ipcRenderer.invoke("ocr:cancel"),
   listOcrJobs: (data) => ipcRenderer.invoke("project:listOcrJobs", data),
+  listOcrQueue: (data) =>
+    ipcRenderer.invoke("queue:list", data),
+
+  addToOcrQueue: (data) =>
+    ipcRenderer.invoke("queue:add", data),
+
+  removeFromOcrQueue: (data) =>
+    ipcRenderer.invoke("queue:remove", data),
+
+  clearCompletedQueueItems: (data) =>
+    ipcRenderer.invoke("queue:clearCompleted", data),
   analyzeProject: (data) =>
     ipcRenderer.invoke("analysis:analyzeProject", data),
 

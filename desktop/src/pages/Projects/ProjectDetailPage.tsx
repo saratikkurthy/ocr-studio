@@ -12,6 +12,33 @@ type ProjectExport = {
     createdAt: string;
     modifiedAt: string;
 };
+
+type OcrQueueItem = {
+    id: number;
+    documentId: number;
+    fileName: string;
+    inputPath: string;
+
+    status:
+    | "Waiting"
+    | "Processing"
+    | "Completed"
+    | "Failed"
+    | "Cancelled";
+
+    position: number;
+
+    language: string;
+    compression: string;
+    outputType: string;
+
+    addedAt: string;
+    startedAt?: string;
+    completedAt?: string;
+
+    error?: string;
+    outputPath?: string;
+};
 type OcrJob = {
     id: number;
     fileName: string;
@@ -84,6 +111,9 @@ export default function ProjectDetailPage() {
     const [analyses, setAnalyses] = useState<PdfAnalysis[]>([]);
     const [analysisRunning, setAnalysisRunning] = useState(false);
     const [analysisMessage, setAnalysisMessage] = useState("");
+    const [ocrQueue, setOcrQueue] = useState<OcrQueueItem[]>([]);
+    const [queueMessage, setQueueMessage] = useState("");
+    const [queueUpdating, setQueueUpdating] = useState(false);
 
     const [ocrProgress, setOcrProgress] = useState<{
         fileName: string;
@@ -115,6 +145,13 @@ export default function ProjectDetailPage() {
     const loadDocuments = async (projectPath: string) => {
         const docs = await window.ocrStudio.listProjectDocuments({ projectPath });
         setDocuments(docs);
+    };
+    const loadOcrQueue = async (projectPath: string) => {
+        const queue = await window.ocrStudio.listOcrQueue({
+            projectPath,
+        });
+
+        setOcrQueue(queue);
     };
     const retryJob = async (job: OcrJob) => {
         const matchingDoc = documents.find((doc) => doc.fileName === job.fileName);
@@ -211,6 +248,7 @@ export default function ProjectDetailPage() {
                 await loadExports(data.projectPath);
                 await loadOcrJobs(data.projectPath);
                 await loadAnalysis(data.projectPath);
+                await loadOcrQueue(data.projectPath);
             }
         }
 
@@ -222,6 +260,69 @@ export default function ProjectDetailPage() {
         });
 
         setAnalyses(result);
+    };
+    const addSelectedToQueue = async () => {
+        if (!project?.projectPath) {
+            alert("Project path is missing.");
+            return;
+        }
+
+        if (selectedDocumentIds.length === 0) {
+            alert("Please select at least one PDF.");
+            return;
+        }
+
+        const selectedDocuments = documents.filter((doc) =>
+            selectedDocumentIds.includes(doc.id)
+        );
+
+        const invalidDocuments = selectedDocuments.filter(
+            (doc) =>
+                doc.status === "Processing" ||
+                (doc.status === "Converted" && !allowReprocess)
+        );
+
+        if (invalidDocuments.length > 0) {
+            alert(
+                "Some selected documents cannot be queued:\n\n" +
+                invalidDocuments
+                    .map((doc) => `${doc.fileName} — ${doc.status}`)
+                    .join("\n")
+            );
+            return;
+        }
+
+        setQueueUpdating(true);
+        setQueueMessage("Adding selected PDFs to the OCR queue...");
+
+        try {
+            const result = await window.ocrStudio.addToOcrQueue({
+                projectPath: project.projectPath,
+                documentIds: selectedDocumentIds,
+                language: project.language,
+                compression: selectedCompression,
+                outputType,
+            });
+
+            setOcrQueue(result.queue);
+            setQueueMessage(result.message);
+
+            if (result.success) {
+                setSelectedDocumentIds([]);
+            } else {
+                alert(result.message);
+            }
+        } catch (error) {
+            const message =
+                error instanceof Error
+                    ? error.message
+                    : "Could not add PDFs to the OCR queue.";
+
+            setQueueMessage(message);
+            alert(message);
+        } finally {
+            setQueueUpdating(false);
+        }
     };
     const handleImportFiles = async () => {
         if (!project?.projectPath) {
@@ -239,6 +340,85 @@ export default function ProjectDetailPage() {
         await loadDocuments(project.projectPath);
         setSelectedDocumentIds([]);
     };
+    const removeQueueItem = async (item: OcrQueueItem) => {
+        if (!project?.projectPath) return;
+
+        if (item.status === "Processing") {
+            alert("A processing item cannot be removed.");
+            return;
+        }
+
+        const confirmed = confirm(
+            `Remove this PDF from the OCR queue?\n\n${item.fileName}`
+        );
+
+        if (!confirmed) return;
+
+        setQueueUpdating(true);
+
+        try {
+            const result = await window.ocrStudio.removeFromOcrQueue({
+                projectPath: project.projectPath,
+                queueItemId: item.id,
+            });
+
+            setOcrQueue(result.queue);
+            setQueueMessage(result.message);
+
+            if (!result.success) {
+                alert(result.message);
+            }
+        } finally {
+            setQueueUpdating(false);
+        }
+    };
+    const clearFinishedQueueItems = async () => {
+        if (!project?.projectPath) return;
+
+        const finishedCount = ocrQueue.filter((item) =>
+            ["Completed", "Failed", "Cancelled"].includes(item.status)
+        ).length;
+
+        if (finishedCount === 0) {
+            alert("There are no completed, failed, or cancelled queue items.");
+            return;
+        }
+
+        setQueueUpdating(true);
+
+        try {
+            const updatedQueue =
+                await window.ocrStudio.clearCompletedQueueItems({
+                    projectPath: project.projectPath,
+                });
+
+            setOcrQueue(updatedQueue);
+            setQueueMessage(
+                `${finishedCount} finished queue item(s) removed.`
+            );
+        } finally {
+            setQueueUpdating(false);
+        }
+    };
+    const getQueueBadgeClass = (status: OcrQueueItem["status"]) => {
+        switch (status) {
+            case "Completed":
+                return "completed";
+
+            case "Processing":
+                return "processing";
+
+            case "Failed":
+                return "failed";
+
+            case "Cancelled":
+                return "cancelled";
+
+            default:
+                return "pending";
+        }
+    };
+
 
     const formatDuration = (ms: number) => {
         const seconds = Math.round(ms / 1000);
@@ -425,6 +605,21 @@ export default function ProjectDetailPage() {
     if (!project) {
         return <div className="empty">Loading project...</div>;
     }
+    const waitingQueueCount = ocrQueue.filter(
+        (item) => item.status === "Waiting"
+    ).length;
+
+    const processingQueueCount = ocrQueue.filter(
+        (item) => item.status === "Processing"
+    ).length;
+
+    const completedQueueCount = ocrQueue.filter(
+        (item) => item.status === "Completed"
+    ).length;
+
+    const failedQueueCount = ocrQueue.filter(
+        (item) => item.status === "Failed"
+    ).length;
 
     return (
         <>
@@ -484,6 +679,17 @@ export default function ProjectDetailPage() {
                         <small className="selection-hint">
                             {selectedDocumentIds.length} PDF(s) selected
                         </small>
+                        <button
+                            className="secondary"
+                            onClick={addSelectedToQueue}
+                            disabled={
+                                queueUpdating ||
+                                ocrRunning ||
+                                selectedDocumentIds.length === 0
+                            }
+                        >
+                            {queueUpdating ? "Updating Queue..." : "Add to Queue"}
+                        </button>
 
                         <button
                             className="primary run-ocr-button"
@@ -621,6 +827,156 @@ export default function ProjectDetailPage() {
                             </tbody>
                         </table>
                     )}
+                </div>
+                <div className="panel queue-panel">
+                    <div className="panel-header">
+                        <div>
+                            <h2>OCR Queue</h2>
+                            <p className="panel-description">
+                                PDFs waiting for batch OCR processing.
+                            </p>
+                        </div>
+
+                        {ocrQueue.length > 0 && (
+                            <button
+                                className="small-button"
+                                onClick={clearFinishedQueueItems}
+                                disabled={queueUpdating}
+                            >
+                                Clear Finished
+                            </button>
+                        )}
+                    </div>
+
+                    {queueMessage && (
+                        <div className="queue-message">
+                            {queueMessage}
+                        </div>
+                    )}
+
+                    {ocrQueue.length === 0 ? (
+                        <div className="empty">
+                            Select PDFs and click Add to Queue.
+                        </div>
+                    ) : (
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Position</th>
+                                    <th>File</th>
+                                    <th>Status</th>
+                                    <th>Language</th>
+                                    <th>Compression</th>
+                                    <th>Output</th>
+                                    <th>Added</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+
+                            <tbody>
+                                {[...ocrQueue]
+                                    .sort((a, b) => a.position - b.position)
+                                    .map((item) => (
+                                        <tr key={item.id}>
+                                            <td>
+                                                <strong>#{item.position}</strong>
+                                            </td>
+
+                                            <td>{item.fileName}</td>
+
+                                            <td>
+                                                <span
+                                                    className={`badge ${getQueueBadgeClass(
+                                                        item.status
+                                                    )}`}
+                                                >
+                                                    {item.status}
+                                                </span>
+
+                                                {item.error && (
+                                                    <small className="queue-error">
+                                                        {item.error}
+                                                    </small>
+                                                )}
+                                            </td>
+
+                                            <td>{getLanguageLabel(item.language)}</td>
+
+                                            <td>
+                                                {item.compression
+                                                    ? item.compression
+                                                        .charAt(0)
+                                                        .toUpperCase() +
+                                                    item.compression.slice(1)
+                                                    : "Medium"}
+                                            </td>
+
+                                            <td>
+                                                {item.outputType ===
+                                                    "searchable_pdf_txt"
+                                                    ? "PDF + TXT"
+                                                    : "Searchable PDF"}
+                                            </td>
+
+                                            <td>
+                                                {new Date(
+                                                    item.addedAt
+                                                ).toLocaleString()}
+                                            </td>
+
+                                            <td>
+                                                {item.outputPath && (
+                                                    <button
+                                                        className="small-button"
+                                                        onClick={() =>
+                                                            window.ocrStudio.openPath(
+                                                                item.outputPath!
+                                                            )
+                                                        }
+                                                    >
+                                                        Open Output
+                                                    </button>
+                                                )}
+
+                                                <button
+                                                    className="small-button danger"
+                                                    onClick={() =>
+                                                        removeQueueItem(item)
+                                                    }
+                                                    disabled={
+                                                        queueUpdating ||
+                                                        item.status === "Processing"
+                                                    }
+                                                >
+                                                    Remove
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                            </tbody>
+                        </table>
+                    )}
+                </div>
+                <div className="queue-summary">
+                    <div>
+                        <span>Waiting</span>
+                        <strong>{waitingQueueCount}</strong>
+                    </div>
+
+                    <div>
+                        <span>Processing</span>
+                        <strong>{processingQueueCount}</strong>
+                    </div>
+
+                    <div>
+                        <span>Completed</span>
+                        <strong>{completedQueueCount}</strong>
+                    </div>
+
+                    <div>
+                        <span>Failed</span>
+                        <strong>{failedQueueCount}</strong>
+                    </div>
                 </div>
                 <div className="stat">
                     <h3>PDF Outputs</h3>

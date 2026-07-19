@@ -84,6 +84,35 @@ function saveProjectAnalysis(projectPath, analyses) {
     "utf-8"
   );
 }
+function getOcrQueuePath(projectPath) {
+  return path.join(projectPath, "Logs", "ocr-queue.json");
+}
+
+function readOcrQueue(projectPath) {
+  const queuePath = getOcrQueuePath(projectPath);
+
+  if (!fs.existsSync(queuePath)) {
+    return [];
+  }
+
+  try {
+    return JSON.parse(fs.readFileSync(queuePath, "utf-8"));
+  } catch (error) {
+    console.error("Could not read OCR queue:", error);
+    return [];
+  }
+}
+
+function saveOcrQueue(projectPath, queue) {
+  const logsFolder = path.join(projectPath, "Logs");
+  fs.mkdirSync(logsFolder, { recursive: true });
+
+  fs.writeFileSync(
+    getOcrQueuePath(projectPath),
+    JSON.stringify(queue, null, 2),
+    "utf-8"
+  );
+}
 function runCommand(command) {
   return new Promise((resolve) => {
     exec(command, (error, stdout, stderr) => {
@@ -1040,7 +1069,138 @@ ipcMain.handle("analysis:analyzeProject", async (event, data) => {
     failedCount: failedAnalyses.length,
   };
 });
+ipcMain.handle("queue:list", async (_, data) => {
+  return readOcrQueue(data.projectPath);
+});
 
+ipcMain.handle("queue:add", async (_, data) => {
+  const documentsPath = path.join(data.projectPath, "documents.json");
+
+  if (!fs.existsSync(documentsPath)) {
+    return {
+      success: false,
+      message: "No imported documents found.",
+      queue: [],
+    };
+  }
+
+  const documents = JSON.parse(
+    fs.readFileSync(documentsPath, "utf-8")
+  );
+
+  const documentIds = Array.isArray(data.documentIds)
+    ? data.documentIds
+    : [];
+
+  const selectedDocuments = documents.filter(
+    (document) =>
+      documentIds.includes(document.id) &&
+      document.fileName.toLowerCase().endsWith(".pdf")
+  );
+
+  if (selectedDocuments.length === 0) {
+    return {
+      success: false,
+      message: "No PDF documents were selected.",
+      queue: readOcrQueue(data.projectPath),
+    };
+  }
+
+  const currentQueue = readOcrQueue(data.projectPath);
+
+  const queuedDocumentIds = new Set(
+    currentQueue
+      .filter((item) =>
+        ["Waiting", "Processing"].includes(item.status)
+      )
+      .map((item) => item.documentId)
+  );
+
+  const newItems = selectedDocuments
+    .filter((document) => !queuedDocumentIds.has(document.id))
+    .map((document, index) => ({
+      id:
+        Date.now() +
+        index +
+        Math.floor(Math.random() * 1000),
+
+      documentId: document.id,
+      fileName: document.fileName,
+      inputPath: document.destinationPath,
+
+      status: "Waiting",
+      position: currentQueue.length + index + 1,
+
+      language: data.language || "tel",
+      compression: data.compression || "medium",
+      outputType: data.outputType || "searchable_pdf",
+
+      addedAt: new Date().toISOString(),
+      startedAt: undefined,
+      completedAt: undefined,
+      error: undefined,
+      outputPath: undefined,
+    }));
+
+  const updatedQueue = [...currentQueue, ...newItems];
+
+  saveOcrQueue(data.projectPath, updatedQueue);
+
+  return {
+    success: true,
+    message: `${newItems.length} PDF(s) added to the OCR queue.`,
+    queue: updatedQueue,
+  };
+});
+
+ipcMain.handle("queue:remove", async (_, data) => {
+  const currentQueue = readOcrQueue(data.projectPath);
+
+  const target = currentQueue.find(
+    (item) => item.id === data.queueItemId
+  );
+
+  if (target?.status === "Processing") {
+    return {
+      success: false,
+      message: "A processing queue item cannot be removed.",
+      queue: currentQueue,
+    };
+  }
+
+  const updatedQueue = currentQueue
+    .filter((item) => item.id !== data.queueItemId)
+    .map((item, index) => ({
+      ...item,
+      position: index + 1,
+    }));
+
+  saveOcrQueue(data.projectPath, updatedQueue);
+
+  return {
+    success: true,
+    message: "Queue item removed.",
+    queue: updatedQueue,
+  };
+});
+
+ipcMain.handle("queue:clearCompleted", async (_, data) => {
+  const updatedQueue = readOcrQueue(data.projectPath)
+    .filter(
+      (item) =>
+        !["Completed", "Failed", "Cancelled"].includes(
+          item.status
+        )
+    )
+    .map((item, index) => ({
+      ...item,
+      position: index + 1,
+    }));
+
+  saveOcrQueue(data.projectPath, updatedQueue);
+
+  return updatedQueue;
+});
 app.whenReady().then(createWindow);
 
 app.on("window-all-closed", () => {

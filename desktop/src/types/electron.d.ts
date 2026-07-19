@@ -1,5 +1,30 @@
 export { };
+type OcrQueueItem = {
+    id: number;
+    documentId: number;
+    fileName: string;
+    inputPath: string;
 
+    status:
+    | "Waiting"
+    | "Processing"
+    | "Completed"
+    | "Failed"
+    | "Cancelled";
+
+    position: number;
+
+    language: string;
+    compression: string;
+    outputType: string;
+
+    addedAt: string;
+    startedAt?: string;
+    completedAt?: string;
+
+    error?: string;
+    outputPath?: string;
+};
 type PdfAnalysis = {
     documentId: number;
     fileName: string;
@@ -125,6 +150,34 @@ declare global {
     interface Window {
         ocrStudio: {
             selectWorkspaceFolder: () => Promise<string | null>;
+            listOcrQueue: (data: {
+                projectPath: string;
+            }) => Promise<OcrQueueItem[]>;
+
+            addToOcrQueue: (data: {
+                projectPath: string;
+                documentIds: number[];
+                language: string;
+                compression?: string;
+                outputType?: string;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                queue: OcrQueueItem[];
+            }>;
+
+            removeFromOcrQueue: (data: {
+                projectPath: string;
+                queueItemId: number;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                queue: OcrQueueItem[];
+            }>;
+
+            clearCompletedQueueItems: (data: {
+                projectPath: string;
+            }) => Promise<OcrQueueItem[]>;
 
             createProject: (data: {
                 name: string;
