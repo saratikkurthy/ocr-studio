@@ -3,6 +3,7 @@ import fs from "fs";
 import { fileURLToPath } from "url";
 import { app, BrowserWindow, ipcMain, dialog, shell } from "electron";
 import { exec, spawn } from "child_process";
+import { analyzePdf } from "./analysis/pdfAnalyzer.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -57,7 +58,32 @@ function windowsPathToWslPath(windowsPath) {
   const rest = normalized.slice(2).replace(/\\/g, "/");
   return `/mnt/${driveLetter}${rest}`;
 }
+function getProjectAnalysisPath(projectPath) {
+  return path.join(projectPath, "analysis.json");
+}
 
+function readProjectAnalysis(projectPath) {
+  const analysisPath = getProjectAnalysisPath(projectPath);
+
+  if (!fs.existsSync(analysisPath)) {
+    return [];
+  }
+
+  try {
+    return JSON.parse(fs.readFileSync(analysisPath, "utf-8"));
+  } catch (error) {
+    console.error("Could not read analysis.json:", error);
+    return [];
+  }
+}
+
+function saveProjectAnalysis(projectPath, analyses) {
+  fs.writeFileSync(
+    getProjectAnalysisPath(projectPath),
+    JSON.stringify(analyses, null, 2),
+    "utf-8"
+  );
+}
 function runCommand(command) {
   return new Promise((resolve) => {
     exec(command, (error, stdout, stderr) => {
@@ -302,6 +328,40 @@ function addOcrJob(projectPath, job) {
 
   return updated;
 }
+function updateDocumentStatus(
+  projectPath,
+  documentId,
+  status,
+  extraData = {}
+) {
+  const documentsPath = path.join(projectPath, "documents.json");
+
+  if (!fs.existsSync(documentsPath)) {
+    return [];
+  }
+
+  const documents = JSON.parse(
+    fs.readFileSync(documentsPath, "utf-8")
+  );
+
+  const updated = documents.map((doc) =>
+    doc.id === documentId
+      ? {
+        ...doc,
+        status,
+        ...extraData,
+      }
+      : doc
+  );
+
+  fs.writeFileSync(
+    documentsPath,
+    JSON.stringify(updated, null, 2),
+    "utf-8"
+  );
+
+  return updated;
+}
 
 ipcMain.handle("ocr:runProject", async (event, data) => {
   const jobStartedAt = new Date();
@@ -326,7 +386,23 @@ ipcMain.handle("ocr:runProject", async (event, data) => {
       message: "Please select at least one PDF file first.",
     };
   }
+  const documentsToProcess = selectedDocuments.filter((doc) => {
+    if (doc.status === "Processing") return false;
 
+    if (doc.status === "Converted" && !data.allowReprocess) {
+      return false;
+    }
+
+    return true;
+  });
+
+  if (documentsToProcess.length === 0) {
+    return {
+      success: false,
+      message:
+        "All selected PDFs are already converted or currently processing.",
+    };
+  }
   const exportFolder = path.join(data.projectPath, "Export");
   const logsFolder = path.join(data.projectPath, "Logs");
 
@@ -440,7 +516,20 @@ ipcMain.handle("ocr:runProject", async (event, data) => {
 
   const results = [];
 
-  for (const pdf of selectedDocuments) {
+  for (const pdf of documentsToProcess) {
+    updateDocumentStatus(
+      data.projectPath,
+      pdf.id,
+      "Processing",
+      {
+        processingStartedAt: new Date().toISOString(),
+      }
+    );
+
+    event.sender.send("ocr:documentStatus", {
+      documentId: pdf.id,
+      status: "Processing",
+    });
     const inputPath = pdf.destinationPath;
     const baseName = pdf.fileName.replace(/\.pdf$/i, "");
 
@@ -500,10 +589,28 @@ ipcMain.handle("ocr:runProject", async (event, data) => {
     );
 
     if (ocrResult.code !== 0 || !fs.existsSync(searchablePath)) {
+      const failedAt = new Date().toISOString();
+
+      updateDocumentStatus(
+        data.projectPath,
+        pdf.id,
+        "Failed",
+        {
+          failedAt,
+          lastError: `OCR failed for ${pdf.fileName}`,
+        }
+      );
+
+      event.sender.send("ocr:documentStatus", {
+        documentId: pdf.id,
+        status: "Failed",
+      });
+
       const jobEndedAt = new Date();
 
       const failedJob = {
         id: Date.now() + Math.floor(Math.random() * 10000),
+        documentId: pdf.id,
         fileName: pdf.fileName,
         status: "Failed",
         startedAt: jobStartedAt.toISOString(),
@@ -515,10 +622,12 @@ ipcMain.handle("ocr:runProject", async (event, data) => {
       addOcrJob(data.projectPath, failedJob);
 
       results.push({
+        documentId: pdf.id,
         fileName: pdf.fileName,
         success: false,
         message: failedJob.message,
       });
+
       continue;
     }
 
@@ -564,6 +673,33 @@ ipcMain.handle("ocr:runProject", async (event, data) => {
     const outputSize = fs.statSync(finalPath).size;
     const reductionPercent = ((inputSize - outputSize) / inputSize) * 100;
     const jobEndedAt = new Date();
+    const completedAt = new Date().toISOString();
+
+    updateDocumentStatus(
+      data.projectPath,
+      pdf.id,
+      "Converted",
+      {
+        completedAt,
+        outputPath: finalPath,
+        searchablePath,
+        compressedPath: fs.existsSync(compressedPath)
+          ? compressedPath
+          : undefined,
+        sidecarTxtPath: fs.existsSync(sidecarTxtPath)
+          ? sidecarTxtPath
+          : undefined,
+        inputSize,
+        outputSize,
+        reductionPercent,
+        lastError: undefined,
+      }
+    );
+
+    event.sender.send("ocr:documentStatus", {
+      documentId: pdf.id,
+      status: "Converted",
+    });
 
     const completedJob = {
       id: Date.now() + Math.floor(Math.random() * 10000),
@@ -583,12 +719,17 @@ ipcMain.handle("ocr:runProject", async (event, data) => {
     addOcrJob(data.projectPath, completedJob);
 
     results.push({
+      documentId: pdf.id,
       fileName: pdf.fileName,
       success: true,
       outputPath: finalPath,
       searchablePath,
-      compressedPath: fs.existsSync(compressedPath) ? compressedPath : undefined,
-      sidecarTxtPath: fs.existsSync(sidecarTxtPath) ? sidecarTxtPath : undefined,
+      compressedPath: fs.existsSync(compressedPath)
+        ? compressedPath
+        : undefined,
+      sidecarTxtPath: fs.existsSync(sidecarTxtPath)
+        ? sidecarTxtPath
+        : undefined,
       inputSize,
       ocrSize,
       outputSize,
@@ -773,6 +914,131 @@ ipcMain.handle("ocr:cancel", async () => {
 
 ipcMain.handle("project:listOcrJobs", async (_, data) => {
   return readOcrJobs(data.projectPath);
+});
+
+ipcMain.handle("analysis:listProject", async (_, data) => {
+  return readProjectAnalysis(data.projectPath);
+});
+
+ipcMain.handle("analysis:analyzeProject", async (event, data) => {
+  const documentsPath = path.join(
+    data.projectPath,
+    "documents.json"
+  );
+
+  if (!fs.existsSync(documentsPath)) {
+    return {
+      success: false,
+      message: "No imported documents found.",
+      analyses: [],
+    };
+  }
+
+  const documents = JSON.parse(
+    fs.readFileSync(documentsPath, "utf-8")
+  );
+
+  const requestedDocumentIds = Array.isArray(data.documentIds)
+    ? data.documentIds
+    : [];
+
+  const pdfDocuments = documents.filter((document) => {
+    const isPdf = document.fileName
+      .toLowerCase()
+      .endsWith(".pdf");
+
+    if (!isPdf) return false;
+
+    if (requestedDocumentIds.length === 0) {
+      return true;
+    }
+
+    return requestedDocumentIds.includes(document.id);
+  });
+
+  if (pdfDocuments.length === 0) {
+    return {
+      success: false,
+      message: "No PDF documents were selected for analysis.",
+      analyses: readProjectAnalysis(data.projectPath),
+    };
+  }
+
+  const existingAnalyses = readProjectAnalysis(
+    data.projectPath
+  );
+
+  const analysisMap = new Map(
+    existingAnalyses.map((analysis) => [
+      analysis.documentId,
+      analysis,
+    ])
+  );
+
+  const completedAnalyses = [];
+  const failedAnalyses = [];
+
+  for (let index = 0; index < pdfDocuments.length; index += 1) {
+    const document = pdfDocuments[index];
+
+    event.sender.send("analysis:progress", {
+      documentId: document.id,
+      fileName: document.fileName,
+      current: index + 1,
+      total: pdfDocuments.length,
+      percent: Math.round(
+        ((index + 1) / pdfDocuments.length) * 100
+      ),
+      message: `Analyzing ${document.fileName}`,
+    });
+
+    try {
+      const analysis = await analyzePdf(
+        document.destinationPath
+      );
+
+      const storedAnalysis = {
+        documentId: document.id,
+        ...analysis,
+      };
+
+      analysisMap.set(document.id, storedAnalysis);
+      completedAnalyses.push(storedAnalysis);
+    } catch (error) {
+      const failedAnalysis = {
+        documentId: document.id,
+        fileName: document.fileName,
+        filePath: document.destinationPath,
+        analysisStatus: "Failed",
+        analyzedAt: new Date().toISOString(),
+        error:
+          error instanceof Error
+            ? error.message
+            : String(error),
+      };
+
+      analysisMap.set(document.id, failedAnalysis);
+      failedAnalyses.push(failedAnalysis);
+    }
+
+    saveProjectAnalysis(
+      data.projectPath,
+      Array.from(analysisMap.values())
+    );
+  }
+
+  const analyses = Array.from(analysisMap.values());
+
+  return {
+    success: completedAnalyses.length > 0,
+    message:
+      failedAnalyses.length === 0
+        ? `Analysis completed for ${completedAnalyses.length} PDF(s).`
+        : `Analysis completed for ${completedAnalyses.length} PDF(s); ${failedAnalyses.length} failed.`,
+    analyses,
+    completedCount: completedAnalyses.length,
+    failedCount: failedAnalyses.length,
+  };
 });
 
 app.whenReady().then(createWindow);

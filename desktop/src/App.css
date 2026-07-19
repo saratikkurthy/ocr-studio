@@ -753,3 +753,49 @@ td:last-child {
   grid-template-columns: repeat(4, 1fr);
   margin-bottom: 22px;
 }
+.badge.processing {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.badge.failed {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.badge.cancelled {
+  background: #f3f4f6;
+  color: #4b5563;
+}
+.reprocess-option {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #9a3412;
+  cursor: pointer;
+}
+
+.reprocess-option input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.document-result,
+.document-error {
+  display: block;
+  margin-top: 5px;
+  font-size: 11px;
+}
+
+.document-result {
+  color: #15803d;
+}
+
+.document-error {
+  max-width: 240px;
+  color: #b91c1c;
+}

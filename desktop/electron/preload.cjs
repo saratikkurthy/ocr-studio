@@ -17,8 +17,31 @@ contextBridge.exposeInMainWorld("ocrStudio", {
   verifyPdfTextLayer: (data) => ipcRenderer.invoke("pdf:verifyTextLayer", data),
   cancelOcr: () => ipcRenderer.invoke("ocr:cancel"),
   listOcrJobs: (data) => ipcRenderer.invoke("project:listOcrJobs", data),
+  analyzeProject: (data) =>
+    ipcRenderer.invoke("analysis:analyzeProject", data),
+
+  listProjectAnalysis: (data) =>
+    ipcRenderer.invoke("analysis:listProject", data),
+
+  onAnalysisProgress: (callback) => {
+    ipcRenderer.removeAllListeners("analysis:progress");
+
+    ipcRenderer.on(
+      "analysis:progress",
+      (_event, progress) => callback(progress)
+    );
+  },
   onOcrProgress: (callback) => {
     ipcRenderer.removeAllListeners("ocr:progress");
     ipcRenderer.on("ocr:progress", (_event, data) => callback(data));
+
+  },
+  onOcrDocumentStatus: (callback) => {
+    ipcRenderer.removeAllListeners("ocr:documentStatus");
+
+    ipcRenderer.on(
+      "ocr:documentStatus",
+      (_event, data) => callback(data)
+    );
   },
 });

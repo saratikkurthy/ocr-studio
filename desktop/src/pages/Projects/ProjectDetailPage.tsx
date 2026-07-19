@@ -5,15 +5,6 @@ import { getProjectById } from "../../services/projectStorage";
 import type { Project } from "../../services/projectStorage";
 import { getLanguageLabel } from "../../services/languageService";
 
-type ProjectDocument = {
-    id: number;
-    fileName: string;
-    sourcePath: string;
-    destinationPath: string;
-    status: string;
-    importedAt: string;
-};
-
 type ProjectExport = {
     fileName: string;
     filePath: string;
@@ -36,6 +27,44 @@ type OcrJob = {
     reductionPercent?: number;
     sidecarTxtPath?: string;
 };
+type ProjectDocument = {
+    id: number;
+    fileName: string;
+    sourcePath: string;
+    destinationPath: string;
+    status:
+    | "Imported"
+    | "Processing"
+    | "Converted"
+    | "Failed"
+    | "Cancelled";
+    importedAt: string;
+    processingStartedAt?: string;
+    completedAt?: string;
+    failedAt?: string;
+    outputPath?: string;
+    reductionPercent?: number;
+    lastError?: string;
+};
+type PdfAnalysis = {
+    documentId: number;
+    fileName: string;
+    filePath: string;
+    fileSize: number;
+    pageCount: number;
+    searchable: boolean;
+    characterCount: number;
+    imageCount: number;
+    estimatedDocumentType: string;
+    qualityScore: number;
+    qualityLabel: string;
+    recommendation: "RUN_OCR" | "SKIP_OCR" | "REVIEW";
+    recommendationLabel: string;
+    recommendationReason: string;
+    analysisStatus: "Completed" | "Failed";
+    analyzedAt: string;
+    error?: string;
+};
 
 
 export default function ProjectDetailPage() {
@@ -46,11 +75,16 @@ export default function ProjectDetailPage() {
     const [documents, setDocuments] = useState<ProjectDocument[]>([]);
     const [exports, setExports] = useState<ProjectExport[]>([]);
     const [ocrRunning, setOcrRunning] = useState(false);
+    const [allowReprocess, setAllowReprocess] = useState(false);
     const [ocrMessage, setOcrMessage] = useState("");
     const [selectedCompression, setSelectedCompression] = useState("medium");
     const [outputType, setOutputType] = useState("searchable_pdf");
     const [selectedDocumentIds, setSelectedDocumentIds] = useState<number[]>([]);
     const [ocrJobs, setOcrJobs] = useState<OcrJob[]>([]);
+    const [analyses, setAnalyses] = useState<PdfAnalysis[]>([]);
+    const [analysisRunning, setAnalysisRunning] = useState(false);
+    const [analysisMessage, setAnalysisMessage] = useState("");
+
     const [ocrProgress, setOcrProgress] = useState<{
         fileName: string;
         currentPage?: number;
@@ -109,12 +143,58 @@ export default function ProjectDetailPage() {
             `Sample:\n${result.sampleText || "No text sample available."}`
         );
     };
+    const getDocumentBadgeClass = (
+        status: ProjectDocument["status"]
+    ) => {
+        switch (status) {
+            case "Converted":
+                return "completed";
+
+            case "Failed":
+                return "failed";
+
+            case "Processing":
+                return "processing";
+
+            case "Cancelled":
+                return "cancelled";
+
+            default:
+                return "pending";
+        }
+    };
     useEffect(() => {
         if (!window.ocrStudio?.onOcrProgress) return;
 
         window.ocrStudio.onOcrProgress((data) => {
             setOcrProgress(data);
             setOcrMessage(`${data.fileName}: ${data.message}`);
+        });
+    }, []);
+
+    useEffect(() => {
+        if (!window.ocrStudio?.onOcrDocumentStatus) return;
+
+        window.ocrStudio.onOcrDocumentStatus((update) => {
+            setDocuments((currentDocuments) =>
+                currentDocuments.map((doc) =>
+                    doc.id === update.documentId
+                        ? {
+                            ...doc,
+                            status: update.status,
+                        }
+                        : doc
+                )
+            );
+        });
+    }, []);
+    useEffect(() => {
+        if (!window.ocrStudio?.onAnalysisProgress) return;
+
+        window.ocrStudio.onAnalysisProgress((progress) => {
+            setAnalysisMessage(
+                `${progress.fileName} — ${progress.current} of ${progress.total} — ${progress.percent}%`
+            );
         });
     }, []);
     useEffect(() => {
@@ -130,12 +210,19 @@ export default function ProjectDetailPage() {
                 await loadDocuments(data.projectPath);
                 await loadExports(data.projectPath);
                 await loadOcrJobs(data.projectPath);
+                await loadAnalysis(data.projectPath);
             }
         }
 
         loadProject();
     }, [id]);
+    const loadAnalysis = async (projectPath: string) => {
+        const result = await window.ocrStudio.listProjectAnalysis({
+            projectPath,
+        });
 
+        setAnalyses(result);
+    };
     const handleImportFiles = async () => {
         if (!project?.projectPath) {
             alert("Project path is missing.");
@@ -149,6 +236,8 @@ export default function ProjectDetailPage() {
         setDocuments(imported);
         await loadExports(project.projectPath);
         await loadOcrJobs(project.projectPath);
+        await loadDocuments(project.projectPath);
+        setSelectedDocumentIds([]);
     };
 
     const formatDuration = (ms: number) => {
@@ -181,13 +270,45 @@ export default function ProjectDetailPage() {
     };
 
     const selectAllDocuments = () => {
-        setSelectedDocumentIds(documents.map((doc) => doc.id));
+        const selectableDocuments = documents.filter((doc) => {
+            if (doc.status === "Processing") return false;
+            if (doc.status === "Converted" && !allowReprocess) return false;
+            return true;
+        });
+
+        setSelectedDocumentIds(selectableDocuments.map((doc) => doc.id));
     };
 
     const clearDocumentSelection = () => {
         setSelectedDocumentIds([]);
     };
+    const analyzeSelectedPdfs = async () => {
+        if (!project?.projectPath) {
+            alert("Project path is missing.");
+            return;
+        }
 
+        if (selectedDocumentIds.length === 0) {
+            alert("Please select at least one PDF to analyze.");
+            return;
+        }
+
+        setAnalysisRunning(true);
+        setAnalysisMessage("Starting PDF analysis...");
+
+        const result = await window.ocrStudio.analyzeProject({
+            projectPath: project.projectPath,
+            documentIds: selectedDocumentIds,
+        });
+
+        setAnalysisRunning(false);
+        setAnalysisMessage(result.message);
+        setAnalyses(result.analyses);
+
+        if (!result.success) {
+            alert(result.message);
+        }
+    };
     const deleteDocument = async (doc: ProjectDocument) => {
         if (!project?.projectPath) return;
         if (!confirm(`Delete imported document?\n\n${doc.fileName}`)) return;
@@ -219,18 +340,40 @@ export default function ProjectDetailPage() {
             return;
         }
 
-        if (selectedDocumentIds.length === 0) {
+        const selectedDocuments = documents.filter((doc) =>
+            selectedDocumentIds.includes(doc.id)
+        );
+
+        if (selectedDocuments.length === 0) {
             alert("Please select at least one PDF to convert.");
             return;
         }
 
-        if (exports.length > 0) {
-            const confirmRun = confirm(
-                "Generated outputs already exist for this project.\n\nDo you still want to run OCR again?"
-            );
+        const processingDocuments = selectedDocuments.filter(
+            (doc) => doc.status === "Processing"
+        );
 
-            if (!confirmRun) return;
+        if (processingDocuments.length > 0) {
+            alert(
+                "Some selected PDFs are already processing:\n\n" +
+                processingDocuments.map((doc) => doc.fileName).join("\n")
+            );
+            return;
         }
+
+        const convertedDocuments = selectedDocuments.filter(
+            (doc) => doc.status === "Converted"
+        );
+
+        if (convertedDocuments.length > 0 && !allowReprocess) {
+            alert(
+                "Some selected PDFs were already converted:\n\n" +
+                convertedDocuments.map((doc) => doc.fileName).join("\n") +
+                "\n\nEnable “Allow reprocessing converted PDFs” to run them again."
+            );
+            return;
+        }
+
 
         setOcrRunning(true);
         setOcrMessage("Checking OCR tools...");
@@ -252,6 +395,7 @@ export default function ProjectDetailPage() {
             compression: selectedCompression,
             outputType,
             documentIds: selectedDocumentIds,
+            allowReprocess,
         });
 
         setOcrRunning(false);
@@ -315,7 +459,13 @@ export default function ProjectDetailPage() {
                                 <option value="searchable_pdf_txt">Searchable PDF + OCR Text TXT</option>
                             </select>
                         </div>
-
+                        <button
+                            className="secondary"
+                            onClick={analyzeSelectedPdfs}
+                            disabled={analysisRunning || selectedDocumentIds.length === 0}
+                        >
+                            {analysisRunning ? "Analyzing..." : "Analyze Selected PDFs"}
+                        </button>
                         <div className="compression-control">
                             <label htmlFor="compression">PDF Compression</label>
                             <select
@@ -341,7 +491,33 @@ export default function ProjectDetailPage() {
                             disabled={ocrRunning || documents.length === 0}
                         >
                             {ocrRunning ? "Running OCR..." : "Run OCR"}
+
                         </button>
+                        <label className="reprocess-option">
+                            <input
+                                type="checkbox"
+                                checked={allowReprocess}
+                                onChange={(event) => {
+                                    const enabled = event.target.checked;
+                                    setAllowReprocess(enabled);
+
+                                    if (!enabled) {
+                                        const convertedIds = new Set(
+                                            documents
+                                                .filter((doc) => doc.status === "Converted")
+                                                .map((doc) => doc.id)
+                                        );
+
+                                        setSelectedDocumentIds((current) =>
+                                            current.filter((documentId) => !convertedIds.has(documentId))
+                                        );
+                                    }
+                                }}
+                                disabled={ocrRunning}
+                            />
+
+                            Allow reprocessing converted PDFs
+                        </label>
                     </div>
                 </div>
             </div>
@@ -381,7 +557,13 @@ export default function ProjectDetailPage() {
                     </div>
                 </div>
             )}
-
+            {analysisMessage && (
+                <div className="panel ocr-progress-panel">
+                    <div className="ocr-progress-body">
+                        <strong>{analysisMessage}</strong>
+                    </div>
+                </div>
+            )}
             <section className="stats project-stats">
                 <div className="stat">
                     <h3>Imported Files</h3>
@@ -394,7 +576,52 @@ export default function ProjectDetailPage() {
                     <strong>{selectedDocumentIds.length}</strong>
                     <p>Will be processed</p>
                 </div>
+                <div className="panel">
+                    <div className="panel-header">
+                        <h2>PDF Analysis</h2>
+                    </div>
 
+                    {analyses.length === 0 ? (
+                        <div className="empty">
+                            Select PDFs and click Analyze Selected PDFs.
+                        </div>
+                    ) : (
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>File</th>
+                                    <th>Pages</th>
+                                    <th>Searchable</th>
+                                    <th>Images</th>
+                                    <th>Quality</th>
+                                    <th>Recommendation</th>
+                                </tr>
+                            </thead>
+
+                            <tbody>
+                                {analyses.map((analysis) => (
+                                    <tr key={analysis.documentId}>
+                                        <td>{analysis.fileName}</td>
+                                        <td>{analysis.pageCount ?? "—"}</td>
+                                        <td>{analysis.searchable ? "Yes" : "No"}</td>
+                                        <td>{analysis.imageCount ?? "—"}</td>
+                                        <td>
+                                            {analysis.analysisStatus === "Completed"
+                                                ? `${analysis.qualityLabel} (${analysis.qualityScore}%)`
+                                                : "Failed"}
+                                        </td>
+                                        <td>
+                                            <strong>{analysis.recommendationLabel}</strong>
+                                            <small style={{ display: "block", marginTop: 4 }}>
+                                                {analysis.recommendationReason}
+                                            </small>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    )}
+                </div>
                 <div className="stat">
                     <h3>PDF Outputs</h3>
                     <strong>{exports.filter((file) => file.fileName.toLowerCase().endsWith(".pdf")).length}</strong>
@@ -460,12 +687,28 @@ export default function ProjectDetailPage() {
                                             <input
                                                 type="checkbox"
                                                 checked={selectedDocumentIds.includes(doc.id)}
+                                                disabled={
+                                                    ocrRunning ||
+                                                    doc.status === "Processing" ||
+                                                    (doc.status === "Converted" && !allowReprocess)
+                                                }
                                                 onChange={() => toggleDocumentSelection(doc.id)}
+                                                title={
+                                                    doc.status === "Processing"
+                                                        ? "This PDF is currently processing"
+                                                        : doc.status === "Converted" && !allowReprocess
+                                                            ? "Enable reprocessing to select this converted PDF"
+                                                            : "Select this PDF for OCR"
+                                                }
                                             />
                                         </td>
                                         <td>{doc.fileName}</td>
                                         <td>
-                                            <span className="badge pending">{doc.status}</span>
+                                            <span
+                                                className={`badge ${getDocumentBadgeClass(doc.status)}`}
+                                            >
+                                                {doc.status}
+                                            </span>
                                         </td>
                                         <td>{new Date(doc.importedAt).toLocaleString()}</td>
                                         <td>
@@ -582,6 +825,8 @@ export default function ProjectDetailPage() {
                                                     ? `${job.reductionPercent.toFixed(1)}%`
                                                     : "—"}
                                             </td>
+
+
                                             <td>
                                                 {job.outputPath && (
                                                     <button
