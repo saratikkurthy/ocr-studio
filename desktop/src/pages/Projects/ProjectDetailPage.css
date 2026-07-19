@@ -531,3 +531,1070 @@
         width: 100%;
     }
 }
+
+
+/* Append these rules to ProjectDetailPage.css */
+.queue-worker-message {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: center;
+}
+
+.queue-worker-message span {
+    font-weight: 500;
+}
+
+.queue-worker-message.running {
+    background: #ecfdf5;
+    color: #166534;
+}
+
+.queue-worker-message.stopping {
+    background: #fff7ed;
+    color: #9a3412;
+}
+
+.queue-worker-message.stopped {
+    background: #fef2f2;
+    color: #991b1b;
+}
+
+
+/* Phase 5A — Dual PDF Review Workspace */
+.review-workspace {
+    display: grid;
+    gap: 14px;
+    min-width: 0;
+}
+
+.review-toolbar {
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px 16px;
+    border: 1px solid var(--border-color, #d8dee9);
+    border-radius: 10px;
+    background: var(--panel-background, #ffffff);
+}
+
+.review-document-picker {
+    display: grid;
+    gap: 6px;
+    min-width: min(520px, 55vw);
+}
+
+.review-document-picker label {
+    color: #667085;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.review-document-picker select {
+    width: 100%;
+    min-height: 38px;
+    padding: 7px 10px;
+    border: 1px solid #cfd6e1;
+    border-radius: 7px;
+    background: #ffffff;
+    color: #1f2937;
+}
+
+.review-toolbar-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.review-metrics {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(115px, 1fr));
+    gap: 10px;
+}
+
+.review-metrics span {
+    display: grid;
+    gap: 4px;
+    padding: 10px 12px;
+    border: 1px solid #dde3ec;
+    border-radius: 8px;
+    background: #f8fafc;
+    color: #334155;
+    font-size: 13px;
+}
+
+.review-metrics strong {
+    color: #64748b;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.dual-pdf-viewer {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 12px;
+    min-height: 690px;
+}
+
+.pdf-review-pane {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid #cfd6e1;
+    border-radius: 10px;
+    background: #20242b;
+    box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
+}
+
+.pdf-review-pane > header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 54px;
+    padding: 10px 14px;
+    border-bottom: 1px solid #d8dee9;
+    background: #ffffff;
+}
+
+.pdf-review-pane > header div {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+}
+
+.pdf-review-pane > header strong {
+    color: #111827;
+    font-size: 14px;
+}
+
+.pdf-review-pane > header span {
+    overflow: hidden;
+    color: #6b7280;
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pdf-frame-shell {
+    position: relative;
+    min-height: 630px;
+    background: #20242b;
+}
+
+.pdf-preview-frame {
+    display: block;
+    width: 100%;
+    height: 100%;
+    min-height: 630px;
+    border: 0;
+    background: #20242b;
+}
+
+.pdf-loading,
+.pdf-empty {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    color: #d7dde7;
+    text-align: center;
+}
+
+.review-help {
+    padding: 10px 12px;
+    border-left: 3px solid #f59e0b;
+    background: #fffbeb;
+    color: #78450a;
+    font-size: 13px;
+}
+
+@media (max-width: 1050px) {
+    .review-toolbar {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .review-document-picker {
+        min-width: 0;
+    }
+
+    .review-toolbar-actions {
+        justify-content: flex-start;
+    }
+
+    .review-metrics {
+        grid-template-columns: repeat(2, minmax(120px, 1fr));
+    }
+
+    .dual-pdf-viewer {
+        grid-template-columns: 1fr;
+    }
+}
+
+
+/* Phase 5A PDF.js renderer fix */
+.pdf-review-pane > header {
+    gap: 12px;
+}
+
+.pdf-viewer-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+}
+
+.icon-button {
+    min-width: 30px;
+    height: 30px;
+    padding: 0 8px;
+    border: 1px solid #cfd6e1;
+    border-radius: 6px;
+    background: #ffffff;
+    color: #1f2937;
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+}
+
+.icon-button:hover:not(:disabled) {
+    background: #f1f5f9;
+}
+
+.icon-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+}
+
+.pdf-page-control {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    color: #64748b;
+    font-size: 12px;
+}
+
+.pdf-page-control input {
+    width: 54px;
+    height: 30px;
+    padding: 4px 6px;
+    border: 1px solid #cfd6e1;
+    border-radius: 6px;
+    text-align: center;
+}
+
+.pdf-zoom-label {
+    min-width: 48px;
+    color: #475569;
+    font-size: 12px;
+    font-weight: 700;
+    text-align: center;
+}
+
+.pdfjs-shell {
+    overflow: hidden;
+    background:
+        linear-gradient(45deg, #2f343c 25%, transparent 25%),
+        linear-gradient(-45deg, #2f343c 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, #2f343c 75%),
+        linear-gradient(-45deg, transparent 75%, #2f343c 75%),
+        #272c33;
+    background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+    background-size: 16px 16px;
+}
+
+.pdf-canvas-scroll {
+    position: absolute;
+    inset: 0;
+    overflow: auto;
+    padding: 24px;
+    text-align: center;
+}
+
+.pdf-page-canvas {
+    display: inline-block;
+    max-width: none;
+    background: #ffffff;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    vertical-align: top;
+}
+
+.pdfjs-shell .pdf-loading,
+.pdfjs-shell .pdf-empty {
+    z-index: 2;
+    background: rgba(32, 36, 43, 0.92);
+}
+
+@media (max-width: 1200px) {
+    .pdf-review-pane > header {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .pdf-viewer-controls {
+        justify-content: flex-start;
+    }
+}
+
+
+/* Poppler page-on-demand preview */
+.poppler-preview-shell {
+    overflow: hidden;
+    background:
+        linear-gradient(45deg, #2f343c 25%, transparent 25%),
+        linear-gradient(-45deg, #2f343c 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, #2f343c 75%),
+        linear-gradient(-45deg, transparent 75%, #2f343c 75%),
+        #272c33;
+    background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+    background-size: 16px 16px;
+}
+
+.pdf-image-scroll {
+    position: absolute;
+    inset: 0;
+    overflow: auto;
+    padding: 24px;
+    text-align: center;
+}
+
+.pdf-page-image {
+    display: inline-block;
+    max-width: none;
+    background: #ffffff;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.38);
+    user-select: none;
+    vertical-align: top;
+}
+
+.poppler-preview-shell .pdf-loading,
+.poppler-preview-shell .pdf-empty {
+    z-index: 3;
+    background: rgba(32, 36, 43, 0.9);
+}
+
+
+/* Phase 5B — synchronized review controls */
+.sync-active {
+    border-color: #16a34a !important;
+    background: #ecfdf5 !important;
+    color: #166534 !important;
+}
+
+.review-sync-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 10px 14px;
+    border: 1px solid #d8dee9;
+    border-radius: 8px;
+    background: #f8fafc;
+}
+
+.review-sync-bar > div:first-child {
+    display: grid;
+    gap: 2px;
+}
+
+.review-sync-bar strong {
+    color: #1f2937;
+    font-size: 13px;
+}
+
+.review-sync-bar span {
+    color: #64748b;
+    font-size: 12px;
+}
+
+.review-sync-controls {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}
+
+.review-sync-controls > span {
+    min-width: 64px;
+    color: #334155;
+    font-weight: 700;
+    text-align: center;
+}
+
+@media (max-width: 900px) {
+    .review-sync-bar {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+}
+
+
+/* Phase 5C — quality summary and review issues */
+.review-quality-section {
+    display: grid;
+    grid-template-columns: minmax(240px, 0.8fr) minmax(340px, 1.2fr);
+    gap: 12px;
+}
+
+.review-quality-card,
+.review-issues-card {
+    overflow: hidden;
+    border: 1px solid #d8dee9;
+    border-radius: 10px;
+    background: #ffffff;
+}
+
+.review-quality-card {
+    display: grid;
+    gap: 12px;
+    padding: 15px;
+}
+
+.review-quality-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.review-quality-heading > div:first-child {
+    display: grid;
+    gap: 3px;
+}
+
+.eyebrow {
+    color: #64748b;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.review-quality-heading strong,
+.issues-header-button strong {
+    color: #172033;
+    font-size: 15px;
+}
+
+.quality-score-ring {
+    display: flex;
+    align-items: baseline;
+    justify-content: center;
+    min-width: 72px;
+    height: 52px;
+    padding: 9px 11px;
+    border: 1px solid #fed7aa;
+    border-radius: 999px;
+    background: #fff7ed;
+    color: #c2410c;
+}
+
+.quality-score-ring span {
+    font-size: 20px;
+    font-weight: 800;
+}
+
+.quality-score-ring small {
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.quality-meter {
+    height: 8px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: #e9eef5;
+}
+
+.quality-meter span {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background:
+        linear-gradient(
+            90deg,
+            #dc2626 0%,
+            #f59e0b 50%,
+            #16a34a 100%
+        );
+}
+
+.review-quality-card p {
+    margin: 0;
+    color: #5b6678;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.issues-header-button {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 14px 15px;
+    border: 0;
+    border-bottom: 1px solid #e5eaf1;
+    background: #ffffff;
+    cursor: pointer;
+    text-align: left;
+}
+
+.issues-header-button > div:first-child {
+    display: grid;
+    gap: 3px;
+}
+
+.issue-counts {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+}
+
+.issue-count {
+    padding: 3px 7px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 800;
+}
+
+.issue-count.high {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.issue-count.medium {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.issue-count.low {
+    background: #dbeafe;
+    color: #1e40af;
+}
+
+.issues-chevron {
+    min-width: 22px;
+    color: #64748b;
+    font-size: 18px;
+    text-align: center;
+}
+
+.review-issues-list {
+    display: grid;
+    max-height: 260px;
+    overflow: auto;
+}
+
+.review-issue-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 10px;
+    padding: 11px 14px;
+    border: 0;
+    border-bottom: 1px solid #edf1f6;
+    background: #ffffff;
+    cursor: pointer;
+    text-align: left;
+}
+
+.review-issue-row:last-child {
+    border-bottom: 0;
+}
+
+.review-issue-row:hover,
+.review-issue-row.selected {
+    background: #f8fafc;
+}
+
+.issue-severity-dot {
+    width: 9px;
+    height: 9px;
+    margin-top: 5px;
+    border-radius: 999px;
+}
+
+.review-issue-row.high .issue-severity-dot {
+    background: #dc2626;
+}
+
+.review-issue-row.medium .issue-severity-dot {
+    background: #f59e0b;
+}
+
+.review-issue-row.low .issue-severity-dot {
+    background: #3b82f6;
+}
+
+.issue-copy {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+}
+
+.issue-copy strong {
+    color: #263246;
+    font-size: 13px;
+}
+
+.issue-copy small {
+    color: #677386;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.issue-page {
+    padding: 3px 7px;
+    border-radius: 6px;
+    background: #eef2f7;
+    color: #475569;
+    font-size: 11px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+@media (max-width: 1050px) {
+    .review-quality-section {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 620px) {
+    .issues-header-button {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .issue-counts {
+        justify-content: flex-start;
+    }
+
+    .review-issue-row {
+        grid-template-columns: auto minmax(0, 1fr);
+    }
+
+    .issue-page {
+        grid-column: 2;
+        justify-self: start;
+    }
+}
+
+
+/* Phase 6A — page confidence analysis */
+.confidence-panel {
+    display: grid;
+    gap: 12px;
+    padding: 14px;
+    border: 1px solid #d8dee9;
+    border-radius: 10px;
+    background: #ffffff;
+}
+
+.confidence-panel-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.confidence-panel-header > div:first-child {
+    display: grid;
+    gap: 3px;
+}
+
+.confidence-panel-header strong {
+    color: #172033;
+    font-size: 16px;
+}
+
+.confidence-panel-header small {
+    color: #64748b;
+    font-size: 12px;
+}
+
+.confidence-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.confidence-heatmap {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    max-height: 180px;
+    overflow: auto;
+    padding: 10px;
+    border: 1px solid #e4e9f0;
+    border-radius: 8px;
+    background: #f8fafc;
+}
+
+.confidence-page {
+    display: grid;
+    min-width: 54px;
+    gap: 2px;
+    padding: 7px 8px;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    cursor: pointer;
+    text-align: center;
+}
+
+.confidence-page strong {
+    font-size: 12px;
+}
+
+.confidence-page span {
+    font-size: 11px;
+    font-weight: 800;
+}
+
+.confidence-page.excellent {
+    border-color: #86efac;
+    background: #dcfce7;
+    color: #166534;
+}
+
+.confidence-page.good {
+    border-color: #bfdbfe;
+    background: #dbeafe;
+    color: #1e40af;
+}
+
+.confidence-page.review {
+    border-color: #fde68a;
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.confidence-page.poor,
+.confidence-page.failed {
+    border-color: #fecaca;
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.confidence-page:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 3px 8px rgba(15, 23, 42, 0.12);
+}
+
+.low-confidence-list {
+    display: grid;
+    gap: 8px;
+}
+
+.low-confidence-list > strong {
+    color: #7f1d1d;
+    font-size: 13px;
+}
+
+.low-confidence-list > div {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.low-confidence-list button {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 8px;
+    border: 1px solid #fecaca;
+    border-radius: 999px;
+    background: #fff1f2;
+    color: #991b1b;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.low-confidence-list button span {
+    padding-left: 7px;
+    border-left: 1px solid #fca5a5;
+}
+
+@media (max-width: 850px) {
+    .confidence-panel-header {
+        flex-direction: column;
+    }
+
+    .confidence-actions {
+        justify-content: flex-start;
+    }
+}
+
+
+/* Phase 6B.1 — scalable OCR word database */
+.word-index-panel {
+    display: grid;
+    gap: 12px;
+    padding: 14px;
+    border: 1px solid #d8dee9;
+    border-radius: 10px;
+    background: #ffffff;
+}
+
+.word-index-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.word-index-header > div:first-child {
+    display: grid;
+    gap: 3px;
+}
+
+.word-index-header strong {
+    color: #172033;
+    font-size: 16px;
+}
+
+.word-index-header small {
+    max-width: 720px;
+    color: #64748b;
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.word-index-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.word-index-stats {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(110px, 1fr));
+    gap: 8px;
+}
+
+.word-index-stats > div {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+    padding: 10px;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    background: #f8fafc;
+}
+
+.word-index-stats span {
+    color: #64748b;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.word-index-stats strong {
+    overflow: hidden;
+    color: #1e293b;
+    font-size: 16px;
+    text-overflow: ellipsis;
+}
+
+.word-index-failures {
+    display: grid;
+    gap: 8px;
+    padding: 10px;
+    border: 1px solid #fecaca;
+    border-radius: 8px;
+    background: #fff7f7;
+}
+
+.word-index-failures > strong {
+    color: #991b1b;
+    font-size: 13px;
+}
+
+.word-index-failures > div {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.word-index-failures button {
+    padding: 5px 8px;
+    border: 1px solid #fecaca;
+    border-radius: 999px;
+    background: #ffffff;
+    color: #991b1b;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+@media (max-width: 1150px) {
+    .word-index-stats {
+        grid-template-columns: repeat(3, minmax(120px, 1fr));
+    }
+}
+
+@media (max-width: 850px) {
+    .word-index-header {
+        flex-direction: column;
+    }
+
+    .word-index-actions {
+        justify-content: flex-start;
+    }
+}
+
+@media (max-width: 620px) {
+    .word-index-stats {
+        grid-template-columns: repeat(2, minmax(110px, 1fr));
+    }
+}
+
+
+/* Phase 6B.2 — persistent background word-index jobs */
+.background-job-center {
+    display: grid;
+    gap: 12px;
+    padding: 14px;
+    border: 1px solid #d8dee9;
+    border-radius: 10px;
+    background: #ffffff;
+}
+
+.background-job-center-header > div {
+    display: grid;
+    gap: 3px;
+}
+
+.background-job-center-header strong {
+    color: #172033;
+    font-size: 16px;
+}
+
+.background-job-center-header small {
+    color: #64748b;
+    font-size: 12px;
+}
+
+.background-job-list {
+    display: grid;
+    gap: 10px;
+}
+
+.background-job-card {
+    display: grid;
+    gap: 9px;
+    padding: 12px;
+    border: 1px solid #e2e8f0;
+    border-radius: 9px;
+    background: #f8fafc;
+}
+
+.background-job-card.running {
+    border-color: #93c5fd;
+    background: #eff6ff;
+}
+
+.background-job-card.completed {
+    border-color: #86efac;
+    background: #f0fdf4;
+}
+
+.background-job-card.failed {
+    border-color: #fecaca;
+    background: #fff1f2;
+}
+
+.background-job-card.cancelled {
+    border-color: #fde68a;
+    background: #fffbeb;
+}
+
+.background-job-title,
+.background-job-title > div {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.background-job-title > div {
+    justify-content: flex-start;
+}
+
+.background-job-title span {
+    padding: 3px 7px;
+    border-radius: 999px;
+    background: #e2e8f0;
+    color: #334155;
+    font-size: 10px;
+    font-weight: 800;
+}
+
+.background-job-title small,
+.background-job-card > small {
+    color: #64748b;
+    font-size: 11px;
+}
+
+.background-job-progress {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    gap: 10px;
+}
+
+.background-job-progress > div {
+    height: 8px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: #e2e8f0;
+}
+
+.background-job-progress > div span {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: currentColor;
+    transition: width 180ms ease;
+}
+
+.background-job-progress strong {
+    min-width: 38px;
+    color: #334155;
+    font-size: 11px;
+    text-align: right;
+}
+
+.background-job-card p {
+    margin: 0;
+    color: #475569;
+    font-size: 12px;
+}
+
+.background-job-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+}
+
+.job-error {
+    padding: 8px;
+    border: 1px solid #fecaca;
+    border-radius: 7px;
+    background: #ffffff;
+    color: #991b1b;
+    font-size: 11px;
+    white-space: pre-wrap;
+}

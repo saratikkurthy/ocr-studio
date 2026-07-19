@@ -12,6 +12,7 @@ import OverviewTab from "./project-detail/OverviewTab";
 import ProjectSummary from "./project-detail/ProjectSummary";
 import ProjectToolbar from "./project-detail/ProjectToolbar";
 import QueueTab from "./project-detail/QueueTab";
+import ReviewTab from "./project-detail/ReviewTab";
 import WorkspaceTabs from "./project-detail/WorkspaceTabs";
 
 import type {
@@ -19,6 +20,9 @@ import type {
     OcrProgress,
     OcrQueueItem,
     PdfAnalysis,
+    PageConfidenceRecord,
+    OcrWordIndexManifest,
+    WordIndexBackgroundJob,
     ProjectDocument,
     ProjectExport,
     WorkspaceTab,
@@ -37,6 +41,19 @@ export default function ProjectDetailPage() {
     const [exports, setExports] = useState<ProjectExport[]>([]);
     const [ocrJobs, setOcrJobs] = useState<OcrJob[]>([]);
     const [analyses, setAnalyses] = useState<PdfAnalysis[]>([]);
+    const [pageConfidence, setPageConfidence] = useState<PageConfidenceRecord[]>([]);
+    const [confidenceRunning, setConfidenceRunning] = useState(false);
+    const [confidenceMessage, setConfidenceMessage] = useState("");
+    const [wordIndexManifest, setWordIndexManifest] =
+        useState<OcrWordIndexManifest>({
+            version: 1,
+            documents: [],
+            updatedAt: null,
+        });
+    const [wordIndexRunning, setWordIndexRunning] = useState(false);
+    const [wordIndexMessage, setWordIndexMessage] = useState("");
+    const [wordIndexJobs, setWordIndexJobs] =
+        useState<WordIndexBackgroundJob[]>([]);
     const [ocrQueue, setOcrQueue] = useState<OcrQueueItem[]>([]);
 
     const [selectedDocumentIds, setSelectedDocumentIds] = useState<number[]>([]);
@@ -145,6 +162,93 @@ export default function ProjectDetailPage() {
             );
         });
     }, []);
+
+    useEffect(() => {
+        if (!window.ocrStudio?.onWordIndexQueueUpdated) return;
+
+        window.ocrStudio.onWordIndexQueueUpdated((payload) => {
+            if (
+                !project?.projectPath ||
+                payload.projectPath !== project.projectPath
+            ) {
+                return;
+            }
+
+            setWordIndexJobs(payload.jobs);
+
+            const running = payload.jobs.find(
+                (job) => job.status === "Running"
+            );
+
+            setWordIndexRunning(Boolean(running));
+
+            if (running) {
+                setWordIndexMessage(running.message);
+            } else {
+                const latest = [...payload.jobs]
+                    .sort(
+                        (a, b) =>
+                            new Date(b.updatedAt).getTime() -
+                            new Date(a.updatedAt).getTime()
+                    )
+                    .at(0);
+
+                if (latest) {
+                    setWordIndexMessage(latest.message);
+                }
+
+                void loadWordIndexManifest(project.projectPath);
+            }
+        });
+    }, [project?.projectPath]);
+
+    useEffect(() => {
+        if (!window.ocrStudio?.onWordIndexProgress) return;
+
+        window.ocrStudio.onWordIndexProgress((progress) => {
+            if (
+                !project?.projectPath ||
+                progress.projectPath !== project.projectPath
+            ) {
+                return;
+            }
+
+            setWordIndexMessage(progress.message);
+
+            if (
+                progress.percent === 100 ||
+                progress.message.toLowerCase().includes("cancel")
+            ) {
+                setWordIndexRunning(false);
+                void loadWordIndexManifest(
+                    project.projectPath
+                );
+            }
+        });
+    }, [project?.projectPath]);
+
+    useEffect(() => {
+        if (!window.ocrStudio?.onPageConfidenceProgress) return;
+
+        window.ocrStudio.onPageConfidenceProgress((progress) => {
+            if (
+                !project?.projectPath ||
+                progress.projectPath !== project.projectPath
+            ) {
+                return;
+            }
+
+            setConfidenceMessage(progress.message);
+
+            if (
+                progress.percent === 100 ||
+                progress.message.toLowerCase().includes("cancel")
+            ) {
+                setConfidenceRunning(false);
+                void loadPageConfidence(project.projectPath);
+            }
+        });
+    }, [project?.projectPath]);
 
     useEffect(() => {
         if (!window.ocrStudio?.onOcrQueueUpdated) return;
@@ -416,6 +520,147 @@ export default function ProjectDetailPage() {
         if (!result.success) {
             alert(result.message);
         }
+    };
+
+    const buildWordIndex = async (
+        documentId: number,
+        mode: "quick" | "full"
+    ) => {
+        if (!project?.projectPath) return;
+
+        const result = await window.ocrStudio.enqueueWordIndexJob({
+            projectPath: project.projectPath,
+            documentId,
+            language: project.language || "tel",
+            mode,
+        });
+
+        setWordIndexJobs(result.jobs);
+        setWordIndexMessage(result.message);
+
+        if (!result.success) {
+            alert(result.message);
+        }
+    };
+
+    const cancelWordIndex = async () => {
+        if (!project?.projectPath) return;
+
+        const runningJob = wordIndexJobs.find(
+            (job) => job.status === "Running"
+        );
+
+        if (!runningJob) {
+            setWordIndexMessage("No word-index job is running.");
+            return;
+        }
+
+        const result = await window.ocrStudio.cancelWordIndexJob({
+            projectPath: project.projectPath,
+            jobId: runningJob.id,
+        });
+
+        setWordIndexJobs(result.jobs);
+        setWordIndexMessage(result.message);
+    };
+
+    const cancelWordIndexJob = async (jobId: string) => {
+        if (!project?.projectPath) return;
+
+        const result = await window.ocrStudio.cancelWordIndexJob({
+            projectPath: project.projectPath,
+            jobId,
+        });
+
+        setWordIndexJobs(result.jobs);
+        setWordIndexMessage(result.message);
+    };
+
+    const retryWordIndexJob = async (jobId: string) => {
+        if (!project?.projectPath) return;
+
+        const result = await window.ocrStudio.retryWordIndexJob({
+            projectPath: project.projectPath,
+            jobId,
+        });
+
+        setWordIndexJobs(result.jobs);
+        setWordIndexMessage(result.message);
+    };
+
+    const removeWordIndexJob = async (jobId: string) => {
+        if (!project?.projectPath) return;
+
+        const result = await window.ocrStudio.removeWordIndexJob({
+            projectPath: project.projectPath,
+            jobId,
+        });
+
+        setWordIndexJobs(result.jobs);
+        setWordIndexMessage(result.message);
+    };
+
+    const clearWordIndex = async (documentId: number) => {
+        if (!project?.projectPath) return;
+
+        const manifest = await window.ocrStudio.clearWordIndex({
+            projectPath: project.projectPath,
+            documentId,
+        });
+
+        setWordIndexManifest(manifest);
+        setWordIndexMessage("Word database cleared.");
+    };
+
+    const analyzeConfidence = async (
+        documentId: number,
+        mode: "quick" | "full"
+    ) => {
+        if (!project?.projectPath) return;
+
+        setConfidenceRunning(true);
+        setConfidenceMessage(
+            mode === "quick"
+                ? "Starting quick confidence scan..."
+                : "Starting full confidence scan..."
+        );
+
+        const result = await window.ocrStudio.analyzePageConfidence({
+            projectPath: project.projectPath,
+            documentId,
+            language: project.language || "tel",
+            mode,
+        });
+
+        setPageConfidence(result.records);
+        setConfidenceRunning(false);
+        setConfidenceMessage(result.message);
+
+        if (!result.success && !result.cancelled) {
+            alert(result.message);
+        }
+    };
+
+    const cancelConfidence = async () => {
+        if (!project?.projectPath) return;
+
+        const result = await window.ocrStudio.cancelPageConfidence({
+            projectPath: project.projectPath,
+        });
+
+        setConfidenceMessage(result.message);
+    };
+
+    const clearConfidence = async (documentId: number) => {
+        if (!project?.projectPath) return;
+
+        const records = await window.ocrStudio.clearPageConfidence({
+            projectPath: project.projectPath,
+            documentId,
+        });
+
+        setPageConfidence(records);
+        setConfidenceMessage("Confidence results cleared.");
     };
 
     const removeQueueItem = async (item: OcrQueueItem) => {
@@ -786,6 +1031,15 @@ export default function ProjectDetailPage() {
                     documents: documents.length,
                     analysis: analyses.length,
                     queue: ocrQueue.length,
+                    review: documents.filter(
+                        (document) =>
+                            document.status === "Converted" &&
+                            Boolean(
+                                document.outputPath ||
+                                    document.compressedPath ||
+                                    document.searchablePath
+                            )
+                    ).length,
                     outputs: exports.length,
                     history: ocrJobs.length,
                 }}
@@ -845,6 +1099,32 @@ export default function ProjectDetailPage() {
                             void window.ocrStudio.openPath(path)
                         }
                         getBadgeClass={getQueueBadgeClass}
+                    />
+                )}
+
+                {activeTab === "review" && (
+                    <ReviewTab
+                        documents={documents}
+                        analyses={analyses}
+                        pageConfidence={pageConfidence}
+                        wordIndexManifest={wordIndexManifest}
+                        wordIndexJobs={wordIndexJobs}
+                        wordIndexRunning={wordIndexRunning}
+                        wordIndexMessage={wordIndexMessage}
+                        onBuildWordIndex={buildWordIndex}
+                        onCancelWordIndex={cancelWordIndex}
+                        onCancelWordIndexJob={cancelWordIndexJob}
+                        onRetryWordIndexJob={retryWordIndexJob}
+                        onRemoveWordIndexJob={removeWordIndexJob}
+                        onClearWordIndex={clearWordIndex}
+                        confidenceRunning={confidenceRunning}
+                        confidenceMessage={confidenceMessage}
+                        onAnalyzeConfidence={analyzeConfidence}
+                        onCancelConfidence={cancelConfidence}
+                        onClearConfidence={clearConfidence}
+                        onOpen={(path) =>
+                            void window.ocrStudio.openPath(path)
+                        }
                     />
                 )}
 

@@ -25,6 +25,114 @@ type OcrQueueItem = {
     error?: string;
     outputPath?: string;
 };
+
+
+type WordIndexBackgroundJob = {
+    id: string;
+    type: "WordIndex";
+    documentId: number;
+    fileName: string;
+    mode: "quick" | "full";
+    language: string;
+    status: "Queued" | "Running" | "Completed" | "Failed" | "Cancelled";
+    progress: number;
+    currentPage: number;
+    totalPages: number;
+    pageNumber: number;
+    message: string;
+    createdAt: string;
+    updatedAt: string;
+    startedAt: string | null;
+    completedAt: string | null;
+    error: string | null;
+    attempt: number;
+};
+
+type OcrIndexedWord = {
+    id: string;
+    pageNumber: number;
+    blockNumber: number;
+    paragraphNumber: number;
+    lineNumber: number;
+    wordNumber: number;
+    text: string;
+    confidence: number;
+    box: {
+        left: number;
+        top: number;
+        width: number;
+        height: number;
+    };
+    status: "Unreviewed" | "Verified" | "Corrected" | "Ignored";
+    correctedText: string | null;
+    verifiedAt: string | null;
+};
+
+type OcrWordIndexPage = {
+    version: number;
+    documentId: number;
+    pageNumber: number;
+    sourceFile: string;
+    language: string;
+    imageWidth: number;
+    imageHeight: number;
+    indexedAt: string;
+    summary: {
+        totalWords: number;
+        lowConfidenceWords: number;
+        veryLowConfidenceWords: number;
+        averageConfidence: number;
+    };
+    words: OcrIndexedWord[];
+};
+
+type OcrWordIndexDocument = {
+    documentId: number;
+    fileName: string;
+    language: string;
+    mode: "quick" | "full";
+    pageCount: number;
+    indexedPageCount: number;
+    failedPageCount: number;
+    indexedPages: number[];
+    failedPages: Array<{
+        pageNumber: number;
+        error: string;
+    }>;
+    totalWords: number;
+    lowConfidenceWords: number;
+    veryLowConfidenceWords: number;
+    averageConfidence: number;
+    startedAt: string;
+    completedAt: string;
+    status: "Completed" | "CompletedWithErrors" | "Cancelled";
+};
+
+type OcrWordIndexManifest = {
+    version: number;
+    documents: OcrWordIndexDocument[];
+    updatedAt: string | null;
+};
+
+type PageConfidenceRecord = {
+    documentId: number;
+    fileName: string;
+    pageNumber: number;
+    language: string;
+    confidence: number;
+    confidenceLabel: string;
+    wordCount: number;
+    lowConfidenceWordCount: number;
+    veryLowConfidenceWordCount: number;
+    suspiciousWords: Array<{
+        text: string;
+        confidence: number;
+    }>;
+    status: "Completed" | "Failed";
+    analyzedAt: string;
+    error?: string;
+};
+
 type PdfAnalysis = {
     documentId: number;
     fileName: string;
@@ -238,6 +346,182 @@ declare global {
             listProjectExports: (data: {
                 projectPath: string;
             }) => Promise<ProjectExport[]>;
+
+            getPdfPreviewUrl: (data: {
+                filePath: string;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                url: string | null;
+            }>;
+
+            listWordIndexJobs: (data: {
+                projectPath: string;
+            }) => Promise<WordIndexBackgroundJob[]>;
+
+            enqueueWordIndexJob: (data: {
+                projectPath: string;
+                documentId: number;
+                language: string;
+                mode: "quick" | "full";
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                jobs: WordIndexBackgroundJob[];
+                job?: WordIndexBackgroundJob;
+            }>;
+
+            cancelWordIndexJob: (data: {
+                projectPath: string;
+                jobId: string;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                jobs: WordIndexBackgroundJob[];
+            }>;
+
+            retryWordIndexJob: (data: {
+                projectPath: string;
+                jobId: string;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                jobs: WordIndexBackgroundJob[];
+            }>;
+
+            removeWordIndexJob: (data: {
+                projectPath: string;
+                jobId: string;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                jobs: WordIndexBackgroundJob[];
+            }>;
+
+            onWordIndexQueueUpdated: (
+                callback: (data: {
+                    projectPath: string;
+                    jobs: WordIndexBackgroundJob[];
+                }) => void
+            ) => void;
+
+            getWordIndexManifest: (data: {
+                projectPath: string;
+            }) => Promise<OcrWordIndexManifest>;
+
+            getWordIndexPage: (data: {
+                projectPath: string;
+                documentId: number;
+                pageNumber: number;
+            }) => Promise<OcrWordIndexPage | null>;
+
+            buildWordIndex: (data: {
+                projectPath: string;
+                documentId: number;
+                language: string;
+                mode: "quick" | "full";
+            }) => Promise<{
+                success: boolean;
+                cancelled?: boolean;
+                message: string;
+                manifest: OcrWordIndexManifest;
+            }>;
+
+            cancelWordIndex: (data: {
+                projectPath: string;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+            }>;
+
+            clearWordIndex: (data: {
+                projectPath: string;
+                documentId: number;
+            }) => Promise<OcrWordIndexManifest>;
+
+            onWordIndexProgress: (
+                callback: (data: {
+                    projectPath: string;
+                    documentId: number;
+                    fileName: string;
+                    pageNumber: number;
+                    current: number;
+                    total: number;
+                    percent?: number;
+                    message: string;
+                }) => void
+            ) => void;
+
+            listPageConfidence: (data: {
+                projectPath: string;
+            }) => Promise<PageConfidenceRecord[]>;
+
+            analyzePageConfidence: (data: {
+                projectPath: string;
+                documentId: number;
+                language: string;
+                mode: "quick" | "full";
+            }) => Promise<{
+                success: boolean;
+                cancelled?: boolean;
+                message: string;
+                records: PageConfidenceRecord[];
+            }>;
+
+            cancelPageConfidence: (data: {
+                projectPath: string;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+            }>;
+
+            clearPageConfidence: (data: {
+                projectPath: string;
+                documentId?: number;
+            }) => Promise<PageConfidenceRecord[]>;
+
+            onPageConfidenceProgress: (
+                callback: (data: {
+                    projectPath: string;
+                    documentId: number;
+                    fileName: string;
+                    pageNumber: number;
+                    current: number;
+                    total: number;
+                    percent?: number;
+                    message: string;
+                }) => void
+            ) => void;
+
+            getPdfInfo: (data: {
+                filePath: string;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                pageCount: number;
+                pageWidth?: number;
+                pageHeight?: number;
+            }>;
+
+            renderPdfPage: (data: {
+                filePath: string;
+                pageNumber: number;
+                scalePercent: number;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                dataUrl: string | null;
+                pageNumber: number;
+                scalePercent: number;
+            }>;
+
+            readPdfFile: (data: {
+                filePath: string;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                data: Uint8Array | null;
+            }>;
 
             verifyPdfTextLayer: (data: {
                 filePath: string;

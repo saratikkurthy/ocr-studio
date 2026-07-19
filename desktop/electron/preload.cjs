@@ -15,6 +15,73 @@ contextBridge.exposeInMainWorld("ocrStudio", {
   deleteProjectDocument: (data) => ipcRenderer.invoke("project:deleteDocument", data),
   deleteProjectExport: (data) => ipcRenderer.invoke("project:deleteExport", data),
   verifyPdfTextLayer: (data) => ipcRenderer.invoke("pdf:verifyTextLayer", data),
+  getPdfPreviewUrl: (data) => ipcRenderer.invoke("pdf:getPreviewUrl", data),
+  getPdfInfo: (data) => ipcRenderer.invoke("pdf:getInfo", data),
+
+  listWordIndexJobs: (data) =>
+    ipcRenderer.invoke("wordIndexQueue:list", data),
+
+  enqueueWordIndexJob: (data) =>
+    ipcRenderer.invoke("wordIndexQueue:enqueue", data),
+
+  cancelWordIndexJob: (data) =>
+    ipcRenderer.invoke("wordIndexQueue:cancel", data),
+
+  retryWordIndexJob: (data) =>
+    ipcRenderer.invoke("wordIndexQueue:retry", data),
+
+  removeWordIndexJob: (data) =>
+    ipcRenderer.invoke("wordIndexQueue:remove", data),
+
+  onWordIndexQueueUpdated: (callback) => {
+    ipcRenderer.removeAllListeners("wordIndexQueue:updated");
+    ipcRenderer.on("wordIndexQueue:updated", (_event, payload) =>
+      callback(payload)
+    );
+  },
+
+  getWordIndexManifest: (data) =>
+    ipcRenderer.invoke("wordIndex:getManifest", data),
+
+  getWordIndexPage: (data) =>
+    ipcRenderer.invoke("wordIndex:getPage", data),
+
+  buildWordIndex: (data) =>
+    ipcRenderer.invoke("wordIndex:build", data),
+
+  cancelWordIndex: (data) =>
+    ipcRenderer.invoke("wordIndex:cancel", data),
+
+  clearWordIndex: (data) =>
+    ipcRenderer.invoke("wordIndex:clear", data),
+
+  onWordIndexProgress: (callback) => {
+    ipcRenderer.removeAllListeners("wordIndex:progress");
+    ipcRenderer.on("wordIndex:progress", (_event, payload) =>
+      callback(payload)
+    );
+  },
+
+  listPageConfidence: (data) =>
+    ipcRenderer.invoke("confidence:list", data),
+
+  analyzePageConfidence: (data) =>
+    ipcRenderer.invoke("confidence:analyze", data),
+
+  cancelPageConfidence: (data) =>
+    ipcRenderer.invoke("confidence:cancel", data),
+
+  clearPageConfidence: (data) =>
+    ipcRenderer.invoke("confidence:clear", data),
+
+  onPageConfidenceProgress: (callback) => {
+    ipcRenderer.removeAllListeners("confidence:progress");
+    ipcRenderer.on("confidence:progress", (_event, payload) =>
+      callback(payload)
+    );
+  },
+  renderPdfPage: (data) => ipcRenderer.invoke("pdf:renderPage", data),
+  readPdfFile: (data) => ipcRenderer.invoke("pdf:readFile", data),
   cancelOcr: () => ipcRenderer.invoke("ocr:cancel"),
   listOcrJobs: (data) => ipcRenderer.invoke("project:listOcrJobs", data),
   listOcrQueue: (data) =>

@@ -7,6 +7,7 @@ type WorkspaceTabsProps = {
         documents: number;
         analysis: number;
         queue: number;
+        review: number;
         outputs: number;
         history: number;
     };
@@ -21,6 +22,7 @@ const tabs: Array<{
     { id: "documents", label: "Documents", countKey: "documents" },
     { id: "analysis", label: "Analysis", countKey: "analysis" },
     { id: "queue", label: "Queue", countKey: "queue" },
+    { id: "review", label: "Review", countKey: "review" },
     { id: "outputs", label: "Outputs", countKey: "outputs" },
     { id: "history", label: "History", countKey: "history" },
 ];
