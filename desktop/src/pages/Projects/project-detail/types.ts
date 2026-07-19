@@ -156,6 +156,13 @@ export type OcrWordIndexPage = {
     imageWidth: number;
     imageHeight: number;
     indexedAt: string;
+    updatedAt?: string;
+    reviewSummary?: {
+        unreviewed: number;
+        verified: number;
+        corrected: number;
+        ignored: number;
+    };
     summary: {
         totalWords: number;
         lowConfidenceWords: number;

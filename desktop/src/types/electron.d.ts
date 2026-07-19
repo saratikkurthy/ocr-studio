@@ -77,6 +77,13 @@ type OcrWordIndexPage = {
     imageWidth: number;
     imageHeight: number;
     indexedAt: string;
+    updatedAt?: string;
+    reviewSummary?: {
+        unreviewed: number;
+        verified: number;
+        corrected: number;
+        ignored: number;
+    };
     summary: {
         totalWords: number;
         lowConfidenceWords: number;
@@ -414,6 +421,272 @@ declare global {
                 documentId: number;
                 pageNumber: number;
             }) => Promise<OcrWordIndexPage | null>;
+
+            updateWordIndexWord: (data: {
+                projectPath: string;
+                documentId: number;
+                pageNumber: number;
+                wordId: string;
+                action: "correct" | "verify" | "ignore" | "reset";
+                correctedText?: string;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                page: OcrWordIndexPage | null;
+                word?: OcrIndexedWord;
+            }>;
+
+            getWordCorrectionHistory: (data: {
+                projectPath: string;
+                documentId?: number;
+            }) => Promise<Array<{
+                id: string;
+                documentId: number;
+                pageNumber: number;
+                wordId: string;
+                action: string;
+                originalText: string;
+                previousStatus: string;
+                previousCorrectedText: string | null;
+                status: string;
+                correctedText: string | null;
+                changedAt: string;
+            }>>;
+
+            getCorrectionMemory: (data: {
+                projectPath: string;
+                documentId: number;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                memory: Array<{
+                    sourceText: string;
+                    normalizedSource: string;
+                    correctedText: string;
+                    timesApplied: number;
+                    lastUsedAt: string | null;
+                }>;
+            }>;
+
+            previewBatchCorrection: (data: {
+                projectPath: string;
+                documentId: number;
+                sourceText: string;
+                correctedText: string;
+                maxConfidence?: number;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                totalMatches: number;
+                matches: Array<{
+                    documentId: number;
+                    pageNumber: number;
+                    wordId: string;
+                    text: string;
+                    confidence: number;
+                    status: string;
+                    correctedText: string | null;
+                    box: {
+                        left: number;
+                        top: number;
+                        width: number;
+                        height: number;
+                    };
+                }>;
+            }>;
+
+            listBatchCorrectionTransactions: (data: {
+                projectPath: string;
+                documentId: number;
+            }) => Promise<Array<{
+                id: string;
+                documentId: number;
+                sourceText: string;
+                correctedText: string;
+                createdAt: string;
+                applied: number;
+                failed: number;
+                undoneAt: string | null;
+                undoRestored: number;
+                undoFailed: number;
+            }>>;
+
+            undoBatchCorrection: (data: {
+                projectPath: string;
+                transactionId: string;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                restored: number;
+                failed: number;
+            }>;
+
+            listCorrectionRules: (data: {
+                projectPath: string;
+                documentId: number;
+            }) => Promise<Array<{
+                id: string;
+                documentId: number;
+                sourceText: string;
+                correctedText: string;
+                maxConfidence: number;
+                isEnabled: boolean;
+                createdAt: string;
+                updatedAt: string;
+                appliedCount: number;
+                lastAppliedAt: string | null;
+            }>>;
+
+            saveCorrectionRule: (data: {
+                projectPath: string;
+                documentId: number;
+                sourceText: string;
+                correctedText: string;
+                maxConfidence: number;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                rules: Array<{
+                    id: string;
+                    documentId: number;
+                    sourceText: string;
+                    correctedText: string;
+                    maxConfidence: number;
+                    isEnabled: boolean;
+                    createdAt: string;
+                    updatedAt: string;
+                    appliedCount: number;
+                    lastAppliedAt: string | null;
+                }>;
+            }>;
+
+            toggleCorrectionRule: (data: {
+                projectPath: string;
+                ruleId: string;
+                isEnabled: boolean;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                rules: Array<{
+                    id: string;
+                    documentId: number;
+                    sourceText: string;
+                    correctedText: string;
+                    maxConfidence: number;
+                    isEnabled: boolean;
+                    createdAt: string;
+                    updatedAt: string;
+                    appliedCount: number;
+                    lastAppliedAt: string | null;
+                }>;
+            }>;
+
+            deleteCorrectionRule: (data: {
+                projectPath: string;
+                documentId: number;
+                ruleId: string;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                rules: Array<{
+                    id: string;
+                    documentId: number;
+                    sourceText: string;
+                    correctedText: string;
+                    maxConfidence: number;
+                    isEnabled: boolean;
+                    createdAt: string;
+                    updatedAt: string;
+                    appliedCount: number;
+                    lastAppliedAt: string | null;
+                }>;
+            }>;
+
+            applyBatchCorrection: (data: {
+                projectPath: string;
+                documentId: number;
+                correctedText: string;
+                matches: Array<{
+                    pageNumber: number;
+                    wordId: string;
+                }>;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                applied: number;
+                failed: number;
+            }>;
+
+            suggestWordCorrections: (data: {
+                projectPath: string;
+                documentId: number;
+                pageNumber: number;
+                wordId: string;
+                limit?: number;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                sourceText?: string;
+                scannedPages: number;
+                context: Array<{
+                    id: string;
+                    text: string;
+                    selected: boolean;
+                    confidence: number;
+                }>;
+                suggestions: Array<{
+                    text: string;
+                    score: number;
+                    similarity: number;
+                    occurrences: number;
+                    averageConfidence: number;
+                    correctedOccurrences: number;
+                    verifiedOccurrences: number;
+                    reason: string;
+                    examples: Array<{
+                        pageNumber: number;
+                        confidence: number;
+                        status: string;
+                    }>;
+                }>;
+            }>;
+
+            searchWordIndexDocument: (data: {
+                projectPath: string;
+                documentId: number;
+                query: string;
+                mode: "all" | "review" | "poor" | "unreviewed";
+                limit?: number;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                results: Array<
+                    OcrIndexedWord & {
+                        documentId: number;
+                        sourceFile: string;
+                    }
+                >;
+                scannedPages: number;
+                totalMatches: number;
+                truncated: boolean;
+            }>;
+
+            getWordIndexReviewQueue: (data: {
+                projectPath: string;
+                documentId: number;
+                limit?: number;
+            }) => Promise<{
+                success: boolean;
+                results: Array<
+                    OcrIndexedWord & {
+                        documentId: number;
+                        sourceFile: string;
+                    }
+                >;
+                scannedPages: number;
+                totalMatches: number;
+                truncated: boolean;
+            }>;
 
             buildWordIndex: (data: {
                 projectPath: string;

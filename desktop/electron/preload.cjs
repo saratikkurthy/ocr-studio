@@ -46,6 +46,48 @@ contextBridge.exposeInMainWorld("ocrStudio", {
   getWordIndexPage: (data) =>
     ipcRenderer.invoke("wordIndex:getPage", data),
 
+  updateWordIndexWord: (data) =>
+    ipcRenderer.invoke("wordIndex:updateWord", data),
+
+  getWordCorrectionHistory: (data) =>
+    ipcRenderer.invoke("wordIndex:getCorrectionHistory", data),
+
+  searchWordIndexDocument: (data) =>
+    ipcRenderer.invoke("wordIndex:searchDocument", data),
+
+  suggestWordCorrections: (data) =>
+    ipcRenderer.invoke("wordIndex:suggestCorrections", data),
+
+  getCorrectionMemory: (data) =>
+    ipcRenderer.invoke("wordIndex:getCorrectionMemory", data),
+
+  previewBatchCorrection: (data) =>
+    ipcRenderer.invoke("wordIndex:previewBatchCorrection", data),
+
+  applyBatchCorrection: (data) =>
+    ipcRenderer.invoke("wordIndex:applyBatchCorrection", data),
+
+  listBatchCorrectionTransactions: (data) =>
+    ipcRenderer.invoke("wordIndex:listBatchTransactions", data),
+
+  undoBatchCorrection: (data) =>
+    ipcRenderer.invoke("wordIndex:undoBatchCorrection", data),
+
+  listCorrectionRules: (data) =>
+    ipcRenderer.invoke("wordIndex:listCorrectionRules", data),
+
+  saveCorrectionRule: (data) =>
+    ipcRenderer.invoke("wordIndex:saveCorrectionRule", data),
+
+  toggleCorrectionRule: (data) =>
+    ipcRenderer.invoke("wordIndex:toggleCorrectionRule", data),
+
+  deleteCorrectionRule: (data) =>
+    ipcRenderer.invoke("wordIndex:deleteCorrectionRule", data),
+
+  getWordIndexReviewQueue: (data) =>
+    ipcRenderer.invoke("wordIndex:getReviewQueue", data),
+
   buildWordIndex: (data) =>
     ipcRenderer.invoke("wordIndex:build", data),
 

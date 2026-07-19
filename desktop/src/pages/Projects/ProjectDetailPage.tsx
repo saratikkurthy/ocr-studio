@@ -115,6 +115,51 @@ export default function ProjectDetailPage() {
         setAnalyses(result);
     };
 
+    const loadPageConfidence = async (
+        projectPath: string
+    ) => {
+        const result =
+            await window.ocrStudio.listPageConfidence({
+                projectPath,
+            });
+        setPageConfidence(result);
+    };
+
+    const loadWordIndexManifest = async (
+        projectPath: string
+    ) => {
+        const manifest =
+            await window.ocrStudio.getWordIndexManifest({
+                projectPath,
+            });
+
+        setWordIndexManifest({
+            ...manifest,
+            documents: manifest.documents.map((document) => ({
+                ...document,
+                documentId: Number(document.documentId),
+                indexedPages: document.indexedPages.map(Number),
+            })),
+        });
+        return manifest;
+    };
+
+    const loadWordIndexJobs = async (
+        projectPath: string
+    ) => {
+        const jobs =
+            await window.ocrStudio.listWordIndexJobs({
+                projectPath,
+            });
+
+        setWordIndexJobs(jobs);
+        setWordIndexRunning(
+            jobs.some((job) => job.status === "Running")
+        );
+
+        return jobs;
+    };
+
     const loadOcrQueue = async (projectPath: string) => {
         const result = await window.ocrStudio.listOcrQueue({ projectPath });
         setOcrQueue(result);
@@ -126,6 +171,9 @@ export default function ProjectDetailPage() {
             loadExports(projectPath),
             loadOcrJobs(projectPath),
             loadAnalysis(projectPath),
+            loadPageConfidence(projectPath),
+            loadWordIndexManifest(projectPath),
+            loadWordIndexJobs(projectPath),
             loadOcrQueue(projectPath),
         ]);
     };
@@ -197,7 +245,11 @@ export default function ProjectDetailPage() {
                     setWordIndexMessage(latest.message);
                 }
 
-                void loadWordIndexManifest(project.projectPath);
+                void (async () => {
+                    await loadWordIndexManifest(
+                        project.projectPath
+                    );
+                })();
             }
         });
     }, [project?.projectPath]);
@@ -220,9 +272,11 @@ export default function ProjectDetailPage() {
                 progress.message.toLowerCase().includes("cancel")
             ) {
                 setWordIndexRunning(false);
-                void loadWordIndexManifest(
-                    project.projectPath
-                );
+                void (async () => {
+                    await loadWordIndexManifest(
+                        project.projectPath
+                    );
+                })();
             }
         });
     }, [project?.projectPath]);
@@ -1104,6 +1158,7 @@ export default function ProjectDetailPage() {
 
                 {activeTab === "review" && (
                     <ReviewTab
+                        projectPath={project.projectPath}
                         documents={documents}
                         analyses={analyses}
                         pageConfidence={pageConfidence}

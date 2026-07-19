@@ -1,7 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { OcrWordIndexManifest, PageConfidenceRecord, PdfAnalysis, ProjectDocument, WordIndexBackgroundJob } from "./types";
+import type { OcrIndexedWord, OcrWordIndexManifest, OcrWordIndexPage, PageConfidenceRecord, PdfAnalysis, ProjectDocument, WordIndexBackgroundJob } from "./types";
+
+function normalizeWordSearch(value: string) {
+    return value
+        .normalize("NFC")
+        .replace(/[\u200B-\u200D\uFEFF]/g, "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .toLocaleLowerCase();
+}
 
 type ReviewTabProps = {
+    projectPath: string;
     documents: ProjectDocument[];
     analyses: PdfAnalysis[];
     pageConfidence: PageConfidenceRecord[];
@@ -37,6 +47,77 @@ type ReviewIssue = {
     pageNumber?: number;
 };
 
+type DocumentWordResult = OcrIndexedWord & {
+    documentId: number;
+    sourceFile: string;
+};
+
+type BatchCorrectionTransaction = {
+    id: string;
+    documentId: number;
+    sourceText: string;
+    correctedText: string;
+    createdAt: string;
+    applied: number;
+    failed: number;
+    undoneAt: string | null;
+    undoRestored: number;
+    undoFailed: number;
+};
+
+type CorrectionRule = {
+    id: string;
+    documentId: number;
+    sourceText: string;
+    correctedText: string;
+    maxConfidence: number;
+    isEnabled: boolean;
+    createdAt: string;
+    updatedAt: string;
+    appliedCount: number;
+    lastAppliedAt: string | null;
+};
+
+type CorrectionMemoryItem = {
+    sourceText: string;
+    normalizedSource: string;
+    correctedText: string;
+    timesApplied: number;
+    lastUsedAt: string | null;
+};
+
+type BatchCorrectionMatch = {
+    documentId: number;
+    pageNumber: number;
+    wordId: string;
+    text: string;
+    confidence: number;
+    status: string;
+    correctedText: string | null;
+    box: {
+        left: number;
+        top: number;
+        width: number;
+        height: number;
+    };
+};
+
+type IntelligentSuggestion = {
+    text: string;
+    score: number;
+    similarity: number;
+    occurrences: number;
+    averageConfidence: number;
+    correctedOccurrences: number;
+    verifiedOccurrences: number;
+    reason: string;
+    examples: Array<{
+        pageNumber: number;
+        confidence: number;
+        status: string;
+    }>;
+};
+
 type PreviewPaneProps = {
     title: string;
     subtitle: string;
@@ -47,6 +128,12 @@ type PreviewPaneProps = {
     onPageChange: (pageNumber: number) => void;
     onScaleChange: (scalePercent: number) => void;
     onPageCountChange: (pageCount: number) => void;
+    overlayEnabled?: boolean;
+    overlayWords?: OcrIndexedWord[];
+    overlayImageWidth?: number;
+    overlayImageHeight?: number;
+    selectedOverlayWordId?: string | null;
+    onOverlayWordSelect?: (wordId: string) => void;
 };
 
 function getOutputPath(document: ProjectDocument) {
@@ -183,6 +270,12 @@ function PreviewPane({
     onPageChange,
     onScaleChange,
     onPageCountChange,
+    overlayEnabled = false,
+    overlayWords = [],
+    overlayImageWidth = 0,
+    overlayImageHeight = 0,
+    selectedOverlayWordId = null,
+    onOverlayWordSelect,
 }: PreviewPaneProps) {
     const requestIdRef = useRef(0);
 
@@ -393,12 +486,78 @@ function PreviewPane({
             <div className="pdf-frame-shell poppler-preview-shell">
                 {imageUrl && (
                     <div className="pdf-image-scroll">
-                        <img
-                            src={imageUrl}
-                            alt={`${title}, page ${pageNumber}`}
-                            className="pdf-page-image"
-                            draggable={false}
-                        />
+                        <div className="pdf-page-overlay-stage">
+                            <img
+                                src={imageUrl}
+                                alt={`${title}, page ${pageNumber}`}
+                                className="pdf-page-image"
+                                draggable={false}
+                            />
+
+                            {overlayEnabled &&
+                                overlayImageWidth > 0 &&
+                                overlayImageHeight > 0 && (
+                                    <div
+                                        className="confidence-overlay-layer"
+                                        aria-label="OCR confidence overlay"
+                                    >
+                                        {overlayWords.map((word) => {
+                                            const left =
+                                                (word.box.left /
+                                                    overlayImageWidth) *
+                                                100;
+                                            const top =
+                                                (word.box.top /
+                                                    overlayImageHeight) *
+                                                100;
+                                            const width =
+                                                (word.box.width /
+                                                    overlayImageWidth) *
+                                                100;
+                                            const height =
+                                                (word.box.height /
+                                                    overlayImageHeight) *
+                                                100;
+
+                                            const level =
+                                                word.confidence < 35
+                                                    ? "poor"
+                                                    : word.confidence < 60
+                                                      ? "review"
+                                                      : word.confidence < 75
+                                                        ? "good"
+                                                        : "excellent";
+
+                                            return (
+                                                <button
+                                                    type="button"
+                                                    key={`overlay-${word.id}`}
+                                                    className={`confidence-box ${level} ${
+                                                        selectedOverlayWordId ===
+                                                        word.id
+                                                            ? "selected"
+                                                            : ""
+                                                    }`}
+                                                    style={{
+                                                        left: `${left}%`,
+                                                        top: `${top}%`,
+                                                        width: `${width}%`,
+                                                        height: `${height}%`,
+                                                    }}
+                                                    title={`${word.text} — ${word.confidence.toFixed(
+                                                        1
+                                                    )}% confidence`}
+                                                    onClick={() =>
+                                                        onOverlayWordSelect?.(
+                                                            word.id
+                                                        )
+                                                    }
+                                                />
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                        </div>
                     </div>
                 )}
 
@@ -418,6 +577,7 @@ function PreviewPane({
 }
 
 export default function ReviewTab({
+    projectPath,
     documents,
     analyses,
     pageConfidence,
@@ -469,6 +629,85 @@ export default function ReviewTab({
     const [issuesExpanded, setIssuesExpanded] = useState(true);
     const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null);
 
+    const [wordIndexPage, setWordIndexPage] =
+        useState<OcrWordIndexPage | null>(null);
+    const [wordInspectorLoading, setWordInspectorLoading] =
+        useState(false);
+    const [wordInspectorMessage, setWordInspectorMessage] =
+        useState("");
+    const [selectedWordId, setSelectedWordId] =
+        useState<string | null>(null);
+    const [wordFilter, setWordFilter] = useState<
+        "all" | "review" | "poor"
+    >("review");
+    const [wordSearch, setWordSearch] = useState("");
+    const [confidenceOverlayEnabled, setConfidenceOverlayEnabled] =
+        useState(true);
+    const [confidenceOverlayFilter, setConfidenceOverlayFilter] =
+        useState<"poor" | "review" | "all">("review");
+    const [correctionDraft, setCorrectionDraft] = useState("");
+    const [wordReviewSaving, setWordReviewSaving] =
+        useState(false);
+    const [wordReviewMessage, setWordReviewMessage] =
+        useState("");
+    const [documentSearchQuery, setDocumentSearchQuery] =
+        useState("");
+    const [documentSearchMode, setDocumentSearchMode] =
+        useState<"all" | "review" | "poor" | "unreviewed">(
+            "all"
+        );
+    const [documentSearchResults, setDocumentSearchResults] =
+        useState<DocumentWordResult[]>([]);
+    const [documentSearchLoading, setDocumentSearchLoading] =
+        useState(false);
+    const [documentSearchMessage, setDocumentSearchMessage] =
+        useState("");
+    const [documentSearchTotal, setDocumentSearchTotal] =
+        useState(0);
+    const [documentSearchTruncated, setDocumentSearchTruncated] =
+        useState(false);
+    const [reviewQueue, setReviewQueue] =
+        useState<DocumentWordResult[]>([]);
+    const [reviewQueueTotal, setReviewQueueTotal] =
+        useState(0);
+    const [reviewQueueLoading, setReviewQueueLoading] =
+        useState(false);
+    const [pendingDocumentWordId, setPendingDocumentWordId] =
+        useState<string | null>(null);
+    const [intelligentSuggestions, setIntelligentSuggestions] =
+        useState<IntelligentSuggestion[]>([]);
+    const [suggestionContext, setSuggestionContext] =
+        useState<Array<{
+            id: string;
+            text: string;
+            selected: boolean;
+            confidence: number;
+        }>>([]);
+    const [suggestionLoading, setSuggestionLoading] =
+        useState(false);
+    const [suggestionMessage, setSuggestionMessage] =
+        useState("");
+    const [correctionMemory, setCorrectionMemory] =
+        useState<CorrectionMemoryItem[]>([]);
+    const [batchMatches, setBatchMatches] =
+        useState<BatchCorrectionMatch[]>([]);
+    const [selectedBatchMatchIds, setSelectedBatchMatchIds] =
+        useState<Set<string>>(new Set());
+    const [batchPreviewLoading, setBatchPreviewLoading] =
+        useState(false);
+    const [batchApplyLoading, setBatchApplyLoading] =
+        useState(false);
+    const [batchMessage, setBatchMessage] = useState("");
+    const [batchMaxConfidence, setBatchMaxConfidence] =
+        useState(100);
+    const [batchTransactions, setBatchTransactions] =
+        useState<BatchCorrectionTransaction[]>([]);
+    const [batchUndoLoadingId, setBatchUndoLoadingId] =
+        useState<string | null>(null);
+    const [correctionRules, setCorrectionRules] =
+        useState<CorrectionRule[]>([]);
+    const [ruleMessage, setRuleMessage] = useState("");
+
     useEffect(() => {
         if (
             selectedDocumentId !== null &&
@@ -494,6 +733,30 @@ export default function ReviewTab({
         setOriginalPageCount(0);
         setOutputPageCount(0);
         setSelectedIssueId(null);
+        setWordIndexPage(null);
+        setSelectedWordId(null);
+        setWordInspectorMessage("");
+        setWordSearch("");
+        setCorrectionDraft("");
+        setWordReviewMessage("");
+        setDocumentSearchQuery("");
+        setDocumentSearchResults([]);
+        setDocumentSearchMessage("");
+        setDocumentSearchTotal(0);
+        setDocumentSearchTruncated(false);
+        setReviewQueue([]);
+        setReviewQueueTotal(0);
+        setPendingDocumentWordId(null);
+        setIntelligentSuggestions([]);
+        setSuggestionContext([]);
+        setSuggestionMessage("");
+        setCorrectionMemory([]);
+        setBatchMatches([]);
+        setSelectedBatchMatchIds(new Set());
+        setBatchMessage("");
+        setBatchTransactions([]);
+        setCorrectionRules([]);
+        setRuleMessage("");
     }, [selectedDocumentId]);
 
     const selectedDocument = reviewableDocuments.find(
@@ -508,7 +771,7 @@ export default function ReviewTab({
         () =>
             wordIndexManifest.documents.find(
                 (item) =>
-                    item.documentId === selectedDocumentId
+                    Number(item.documentId) === Number(selectedDocumentId)
             ),
         [wordIndexManifest, selectedDocumentId]
     );
@@ -518,7 +781,7 @@ export default function ReviewTab({
             wordIndexJobs
                 .filter(
                     (job) =>
-                        job.documentId === selectedDocumentId
+                        Number(job.documentId) === Number(selectedDocumentId)
                 )
                 .sort(
                     (a, b) =>
@@ -527,6 +790,818 @@ export default function ReviewTab({
                 ),
         [wordIndexJobs, selectedDocumentId]
     );
+
+    const currentReviewPage = syncEnabled
+        ? sharedPage
+        : outputPage;
+
+    useEffect(() => {
+        let cancelled = false;
+
+        async function loadWordPage() {
+            if (
+                selectedDocumentId === null ||
+                !selectedWordIndex?.indexedPages.includes(
+                    currentReviewPage
+                )
+            ) {
+                setWordIndexPage(null);
+                setSelectedWordId(null);
+                setWordInspectorMessage(
+                    selectedWordIndex
+                        ? `Page ${currentReviewPage} has not been indexed yet.`
+                        : "Build the OCR word database to inspect words."
+                );
+                return;
+            }
+
+            setWordInspectorLoading(true);
+            setWordInspectorMessage("");
+
+            try {
+                const result =
+                    await window.ocrStudio.getWordIndexPage({
+                        projectPath:
+                            projectPath,
+                        documentId: selectedDocumentId,
+                        pageNumber: currentReviewPage,
+                    });
+
+                if (cancelled) return;
+
+                setWordIndexPage(result);
+                setSelectedWordId(
+                    result?.words
+                        .slice()
+                        .sort(
+                            (a, b) =>
+                                a.confidence - b.confidence
+                        )[0]?.id ?? null
+                );
+
+                if (!result) {
+                    setWordInspectorMessage(
+                        `No word data was found for page ${currentReviewPage}.`
+                    );
+                }
+            } catch (error) {
+                if (!cancelled) {
+                    setWordIndexPage(null);
+                    setSelectedWordId(null);
+                    setWordInspectorMessage(
+                        error instanceof Error
+                            ? error.message
+                            : "Could not load the word database page."
+                    );
+                }
+            } finally {
+                if (!cancelled) {
+                    setWordInspectorLoading(false);
+                }
+            }
+        }
+
+        void loadWordPage();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [
+        selectedDocumentId,
+        projectPath,
+        selectedWordIndex,
+        currentReviewPage,
+    ]);
+
+    const visibleWords = useMemo(() => {
+        const query = normalizeWordSearch(wordSearch);
+        const hasSearch = query.length > 0;
+
+        return (wordIndexPage?.words || [])
+            .filter((word) => {
+                const normalizedWord = normalizeWordSearch(
+                    word.correctedText || word.text
+                );
+
+                // A typed or pasted search always searches every word on the
+                // active indexed page. Confidence filters apply only while
+                // browsing without a search term.
+                if (hasSearch) {
+                    return normalizedWord.includes(query);
+                }
+
+                if (
+                    wordFilter === "review" &&
+                    word.confidence >= 60
+                ) {
+                    return false;
+                }
+
+                if (
+                    wordFilter === "poor" &&
+                    word.confidence >= 35
+                ) {
+                    return false;
+                }
+
+                return true;
+            })
+            .sort(
+                (a, b) =>
+                    a.confidence - b.confidence ||
+                    a.lineNumber - b.lineNumber ||
+                    a.wordNumber - b.wordNumber
+            );
+    }, [wordIndexPage, wordFilter, wordSearch]);
+
+    const selectedWord = useMemo(
+        () =>
+            wordIndexPage?.words.find(
+                (word) => word.id === selectedWordId
+            ) ?? null,
+        [wordIndexPage, selectedWordId]
+    );
+
+    useEffect(() => {
+        setCorrectionDraft(
+            selectedWord?.correctedText ||
+                selectedWord?.text ||
+                ""
+        );
+        setWordReviewMessage("");
+        setIntelligentSuggestions([]);
+        setSuggestionContext([]);
+        setSuggestionMessage("");
+        setBatchMatches([]);
+        setSelectedBatchMatchIds(new Set());
+        setBatchMessage("");
+    }, [selectedWordId, selectedWord?.correctedText, selectedWord?.text]);
+
+    const reviewSummary = useMemo(() => {
+        const words = wordIndexPage?.words || [];
+
+        return {
+            unreviewed: words.filter(
+                (word) => word.status === "Unreviewed"
+            ).length,
+            verified: words.filter(
+                (word) => word.status === "Verified"
+            ).length,
+            corrected: words.filter(
+                (word) => word.status === "Corrected"
+            ).length,
+            ignored: words.filter(
+                (word) => word.status === "Ignored"
+            ).length,
+        };
+    }, [wordIndexPage]);
+
+    const runDocumentSearch = async () => {
+        if (selectedDocumentId === null) return;
+
+        setDocumentSearchLoading(true);
+        setDocumentSearchMessage("");
+
+        try {
+            const result =
+                await window.ocrStudio.searchWordIndexDocument({
+                    projectPath,
+                    documentId: selectedDocumentId,
+                    query: documentSearchQuery,
+                    mode: documentSearchMode,
+                    limit: 500,
+                });
+
+            setDocumentSearchResults(result.results);
+            setDocumentSearchTotal(result.totalMatches);
+            setDocumentSearchTruncated(result.truncated);
+            setDocumentSearchMessage(result.message);
+        } catch (error) {
+            setDocumentSearchResults([]);
+            setDocumentSearchTotal(0);
+            setDocumentSearchTruncated(false);
+            setDocumentSearchMessage(
+                error instanceof Error
+                    ? error.message
+                    : "Could not search the document word index."
+            );
+        } finally {
+            setDocumentSearchLoading(false);
+        }
+    };
+
+    const loadDocumentReviewQueue = async () => {
+        if (selectedDocumentId === null) return;
+
+        setReviewQueueLoading(true);
+
+        try {
+            const result =
+                await window.ocrStudio.getWordIndexReviewQueue({
+                    projectPath,
+                    documentId: selectedDocumentId,
+                    limit: 500,
+                });
+
+            setReviewQueue(result.results);
+            setReviewQueueTotal(result.totalMatches);
+        } catch {
+            setReviewQueue([]);
+            setReviewQueueTotal(0);
+        } finally {
+            setReviewQueueLoading(false);
+        }
+    };
+
+    const openDocumentWord = (
+        result: DocumentWordResult
+    ) => {
+        setPendingDocumentWordId(result.id);
+        setWordFilter("all");
+        setWordSearch("");
+
+        if (syncEnabled) {
+            changeSharedPage(result.pageNumber);
+        } else {
+            setOriginalPage(result.pageNumber);
+            setOutputPage(result.pageNumber);
+        }
+
+        window.setTimeout(() => {
+            document
+                .querySelector(".word-inspector")
+                ?.scrollIntoView({
+                    behavior: "smooth",
+                    block: "start",
+                });
+        }, 120);
+    };
+
+    useEffect(() => {
+        if (!pendingDocumentWordId || !wordIndexPage) return;
+
+        const word = wordIndexPage.words.find(
+            (item) => item.id === pendingDocumentWordId
+        );
+
+        if (!word) return;
+
+        setSelectedWordId(word.id);
+        setPendingDocumentWordId(null);
+    }, [pendingDocumentWordId, wordIndexPage]);
+
+    const loadBatchTransactions = async () => {
+        if (selectedDocumentId === null) return;
+
+        try {
+            const transactions =
+                await window.ocrStudio.listBatchCorrectionTransactions({
+                    projectPath,
+                    documentId: selectedDocumentId,
+                });
+
+            setBatchTransactions(transactions);
+        } catch {
+            setBatchTransactions([]);
+        }
+    };
+
+    const undoBatchTransaction = async (
+        transaction: BatchCorrectionTransaction
+    ) => {
+        setBatchUndoLoadingId(transaction.id);
+        setBatchMessage("");
+
+        try {
+            const result =
+                await window.ocrStudio.undoBatchCorrection({
+                    projectPath,
+                    transactionId: transaction.id,
+                });
+
+            setBatchMessage(result.message);
+
+            if (result.success) {
+                await loadBatchTransactions();
+                await loadCorrectionMemory();
+                await loadBatchTransactions();
+                void loadDocumentReviewQueue();
+                void runDocumentSearch();
+
+                if (
+                    selectedDocumentId !== null &&
+                    wordIndexPage
+                ) {
+                    const refreshed =
+                        await window.ocrStudio.getWordIndexPage({
+                            projectPath,
+                            documentId: selectedDocumentId,
+                            pageNumber:
+                                wordIndexPage.pageNumber,
+                        });
+
+                    if (refreshed) {
+                        setWordIndexPage(refreshed);
+                    }
+                }
+            }
+        } catch (error) {
+            setBatchMessage(
+                error instanceof Error
+                    ? error.message
+                    : "Could not undo the batch correction."
+            );
+        } finally {
+            setBatchUndoLoadingId(null);
+        }
+    };
+
+    const loadCorrectionRules = async () => {
+        if (selectedDocumentId === null) return;
+
+        try {
+            const rules =
+                await window.ocrStudio.listCorrectionRules({
+                    projectPath,
+                    documentId: selectedDocumentId,
+                });
+
+            setCorrectionRules(rules);
+        } catch {
+            setCorrectionRules([]);
+        }
+    };
+
+    const saveCurrentCorrectionRule = async () => {
+        if (
+            selectedDocumentId === null ||
+            !selectedWord ||
+            !correctionDraft.trim()
+        ) {
+            setRuleMessage(
+                "Select a word and enter corrected text first."
+            );
+            return;
+        }
+
+        try {
+            const result =
+                await window.ocrStudio.saveCorrectionRule({
+                    projectPath,
+                    documentId: selectedDocumentId,
+                    sourceText: selectedWord.text,
+                    correctedText: correctionDraft,
+                    maxConfidence: batchMaxConfidence,
+                });
+
+            setRuleMessage(result.message);
+            setCorrectionRules(
+                result.rules.filter(
+                    (rule) =>
+                        Number(rule.documentId) ===
+                        selectedDocumentId
+                )
+            );
+        } catch (error) {
+            setRuleMessage(
+                error instanceof Error
+                    ? error.message
+                    : "Could not save the correction rule."
+            );
+        }
+    };
+
+    const toggleCorrectionRule = async (
+        rule: CorrectionRule
+    ) => {
+        try {
+            const result =
+                await window.ocrStudio.toggleCorrectionRule({
+                    projectPath,
+                    ruleId: rule.id,
+                    isEnabled: !rule.isEnabled,
+                });
+
+            setRuleMessage(result.message);
+            setCorrectionRules(
+                result.rules.filter(
+                    (item) =>
+                        Number(item.documentId) ===
+                        selectedDocumentId
+                )
+            );
+        } catch {
+            setRuleMessage(
+                "Could not update the correction rule."
+            );
+        }
+    };
+
+    const deleteCorrectionRule = async (
+        rule: CorrectionRule
+    ) => {
+        if (selectedDocumentId === null) return;
+
+        try {
+            const result =
+                await window.ocrStudio.deleteCorrectionRule({
+                    projectPath,
+                    documentId: selectedDocumentId,
+                    ruleId: rule.id,
+                });
+
+            setRuleMessage(result.message);
+            setCorrectionRules(result.rules);
+        } catch {
+            setRuleMessage(
+                "Could not delete the correction rule."
+            );
+        }
+    };
+
+    const useCorrectionRule = (
+        rule: CorrectionRule
+    ) => {
+        setCorrectionDraft(rule.correctedText);
+        setBatchMaxConfidence(rule.maxConfidence);
+        setRuleMessage(
+            `Loaded rule “${rule.sourceText}” → “${rule.correctedText}”.`
+        );
+
+        if (rule.isEnabled) {
+            void previewBatchCorrection(
+                rule.sourceText,
+                rule.correctedText
+            );
+        }
+    };
+
+    const loadCorrectionMemory = async () => {
+        if (selectedDocumentId === null) return;
+
+        try {
+            const result =
+                await window.ocrStudio.getCorrectionMemory({
+                    projectPath,
+                    documentId: selectedDocumentId,
+                });
+
+            setCorrectionMemory(result.memory);
+        } catch {
+            setCorrectionMemory([]);
+        }
+    };
+
+    const previewBatchCorrection = async (
+        sourceText = selectedWord?.text || "",
+        targetText = correctionDraft
+    ) => {
+        if (
+            selectedDocumentId === null ||
+            !sourceText.trim() ||
+            !targetText.trim()
+        ) {
+            setBatchMessage(
+                "Select a word and enter corrected text first."
+            );
+            return;
+        }
+
+        setBatchPreviewLoading(true);
+        setBatchMessage("");
+
+        try {
+            const result =
+                await window.ocrStudio.previewBatchCorrection({
+                    projectPath,
+                    documentId: selectedDocumentId,
+                    sourceText,
+                    correctedText: targetText,
+                    maxConfidence: batchMaxConfidence,
+                });
+
+            setBatchMatches(result.matches);
+            setSelectedBatchMatchIds(
+                new Set(
+                    result.matches.map(
+                        (match) =>
+                            `${match.pageNumber}:${match.wordId}`
+                    )
+                )
+            );
+            setBatchMessage(result.message);
+        } catch (error) {
+            setBatchMatches([]);
+            setSelectedBatchMatchIds(new Set());
+            setBatchMessage(
+                error instanceof Error
+                    ? error.message
+                    : "Could not preview matching occurrences."
+            );
+        } finally {
+            setBatchPreviewLoading(false);
+        }
+    };
+
+    const applyBatchCorrections = async () => {
+        if (
+            selectedDocumentId === null ||
+            selectedBatchMatchIds.size === 0 ||
+            !correctionDraft.trim()
+        ) {
+            setBatchMessage(
+                "Select at least one matching occurrence."
+            );
+            return;
+        }
+
+        setBatchApplyLoading(true);
+        setBatchMessage("");
+
+        try {
+            const selectedMatches = batchMatches
+                .filter((match) =>
+                    selectedBatchMatchIds.has(
+                        `${match.pageNumber}:${match.wordId}`
+                    )
+                )
+                .map((match) => ({
+                    pageNumber: match.pageNumber,
+                    wordId: match.wordId,
+                }));
+
+            const result =
+                await window.ocrStudio.applyBatchCorrection({
+                    projectPath,
+                    documentId: selectedDocumentId,
+                    correctedText: correctionDraft,
+                    matches: selectedMatches,
+                });
+
+            setBatchMessage(result.message);
+
+            if (result.success) {
+                setBatchMatches([]);
+                setSelectedBatchMatchIds(new Set());
+                await loadCorrectionMemory();
+                void loadDocumentReviewQueue();
+                void runDocumentSearch();
+
+                if (wordIndexPage) {
+                    const refreshed =
+                        await window.ocrStudio.getWordIndexPage({
+                            projectPath,
+                            documentId: selectedDocumentId,
+                            pageNumber:
+                                wordIndexPage.pageNumber,
+                        });
+
+                    if (refreshed) {
+                        setWordIndexPage(refreshed);
+                    }
+                }
+            }
+        } catch (error) {
+            setBatchMessage(
+                error instanceof Error
+                    ? error.message
+                    : "Could not apply batch corrections."
+            );
+        } finally {
+            setBatchApplyLoading(false);
+        }
+    };
+
+    const toggleBatchMatch = (match: BatchCorrectionMatch) => {
+        const key = `${match.pageNumber}:${match.wordId}`;
+
+        setSelectedBatchMatchIds((current) => {
+            const next = new Set(current);
+
+            if (next.has(key)) {
+                next.delete(key);
+            } else {
+                next.add(key);
+            }
+
+            return next;
+        });
+    };
+
+    const useCorrectionMemory = (
+        memory: CorrectionMemoryItem
+    ) => {
+        setCorrectionDraft(memory.correctedText);
+        setBatchMessage(
+            `Loaded learned correction “${memory.sourceText}” → “${memory.correctedText}”.`
+        );
+        void previewBatchCorrection(
+            memory.sourceText,
+            memory.correctedText
+        );
+    };
+
+    const generateIntelligentSuggestions = async () => {
+        if (
+            !selectedWord ||
+            selectedDocumentId === null ||
+            !wordIndexPage
+        ) {
+            return;
+        }
+
+        setSuggestionLoading(true);
+        setSuggestionMessage("");
+
+        try {
+            const result =
+                await window.ocrStudio.suggestWordCorrections({
+                    projectPath,
+                    documentId: selectedDocumentId,
+                    pageNumber: wordIndexPage.pageNumber,
+                    wordId: selectedWord.id,
+                    limit: 8,
+                });
+
+            setIntelligentSuggestions(result.suggestions);
+            setSuggestionContext(result.context);
+            setSuggestionMessage(result.message);
+        } catch (error) {
+            setIntelligentSuggestions([]);
+            setSuggestionContext([]);
+            setSuggestionMessage(
+                error instanceof Error
+                    ? error.message
+                    : "Could not generate correction suggestions."
+            );
+        } finally {
+            setSuggestionLoading(false);
+        }
+    };
+
+    const applyIntelligentSuggestion = (
+        suggestion: IntelligentSuggestion
+    ) => {
+        setCorrectionDraft(suggestion.text);
+        setWordReviewMessage(
+            `Suggestion “${suggestion.text}” loaded. Review it, then save the correction.`
+        );
+    };
+
+    const saveWordReview = async (
+        action: "correct" | "verify" | "ignore" | "reset"
+    ) => {
+        if (
+            !selectedWord ||
+            selectedDocumentId === null ||
+            !wordIndexPage
+        ) {
+            return;
+        }
+
+        setWordReviewSaving(true);
+        setWordReviewMessage("");
+
+        try {
+            const result =
+                await window.ocrStudio.updateWordIndexWord({
+                    projectPath,
+                    documentId: selectedDocumentId,
+                    pageNumber: wordIndexPage.pageNumber,
+                    wordId: selectedWord.id,
+                    action,
+                    correctedText: correctionDraft,
+                });
+
+            if (!result.success || !result.page) {
+                setWordReviewMessage(result.message);
+                return;
+            }
+
+            setWordIndexPage(result.page);
+            setWordReviewMessage(result.message);
+
+            const updatedWord = result.page.words.find(
+                (word) => word.id === selectedWord.id
+            );
+
+            if (updatedWord) {
+                setCorrectionDraft(
+                    updatedWord.correctedText ||
+                        updatedWord.text
+                );
+            }
+
+            void loadDocumentReviewQueue();
+            void loadCorrectionMemory();
+
+            if (
+                documentSearchResults.length > 0 ||
+                documentSearchQuery.trim()
+            ) {
+                void runDocumentSearch();
+            }
+        } catch (error) {
+            setWordReviewMessage(
+                error instanceof Error
+                    ? error.message
+                    : "Could not save the word review."
+            );
+        } finally {
+            setWordReviewSaving(false);
+        }
+    };
+
+    const goToNextReviewWord = () => {
+        if (!wordIndexPage || !selectedWord) return;
+
+        const candidates = wordIndexPage.words
+            .filter(
+                (word) =>
+                    word.status === "Unreviewed" &&
+                    word.confidence < 60
+            )
+            .sort(
+                (a, b) =>
+                    a.confidence - b.confidence ||
+                    a.lineNumber - b.lineNumber ||
+                    a.wordNumber - b.wordNumber
+            );
+
+        if (candidates.length === 0) {
+            setWordReviewMessage(
+                "No additional low-confidence unreviewed words remain on this page."
+            );
+            return;
+        }
+
+        const currentIndex = candidates.findIndex(
+            (word) => word.id === selectedWord.id
+        );
+        const next =
+            candidates[
+                currentIndex >= 0
+                    ? (currentIndex + 1) %
+                      candidates.length
+                    : 0
+            ];
+
+        setSelectedWordId(next.id);
+    };
+
+    const nearbyWords = useMemo(() => {
+        if (!selectedWord || !wordIndexPage) return [];
+
+        const sameLine = wordIndexPage.words.filter(
+            (word) =>
+                word.blockNumber === selectedWord.blockNumber &&
+                word.paragraphNumber ===
+                    selectedWord.paragraphNumber &&
+                word.lineNumber === selectedWord.lineNumber
+        );
+
+        const selectedIndex = sameLine.findIndex(
+            (word) => word.id === selectedWord.id
+        );
+
+        return sameLine.slice(
+            Math.max(0, selectedIndex - 3),
+            selectedIndex + 4
+        );
+    }, [selectedWord, wordIndexPage]);
+
+    const overlayWords = useMemo(() => {
+        const words = wordIndexPage?.words || [];
+
+        if (confidenceOverlayFilter === "poor") {
+            return words.filter(
+                (word) => word.confidence < 35
+            );
+        }
+
+        if (confidenceOverlayFilter === "review") {
+            return words.filter(
+                (word) => word.confidence < 60
+            );
+        }
+
+        return words;
+    }, [wordIndexPage, confidenceOverlayFilter]);
+
+    const selectOverlayWord = (wordId: string) => {
+        setSelectedWordId(wordId);
+        setWordFilter("all");
+        setWordSearch("");
+
+        window.setTimeout(() => {
+            document
+                .querySelector(".word-inspector")
+                ?.scrollIntoView({
+                    behavior: "smooth",
+                    block: "start",
+                });
+        }, 0);
+    };
 
     const selectedConfidence = useMemo(
         () =>
@@ -889,6 +1964,1188 @@ export default function ReviewTab({
                             </div>
                         </div>
                     )}
+            </section>
+
+            <section className="document-word-review">
+                <div className="document-word-review-header">
+                    <div>
+                        <span className="eyebrow">
+                            Document-wide word review
+                        </span>
+                        <strong>
+                            Search every indexed page
+                        </strong>
+                        <small>
+                            Find words throughout the PDF or build a
+                            low-confidence review queue.
+                        </small>
+                    </div>
+
+                    <button
+                        type="button"
+                        className="small-button"
+                        disabled={
+                            reviewQueueLoading ||
+                            selectedDocumentId === null
+                        }
+                        onClick={() =>
+                            void loadDocumentReviewQueue()
+                        }
+                    >
+                        {reviewQueueLoading
+                            ? "Loading queue..."
+                            : "Load review queue"}
+                    </button>
+                </div>
+
+                <div className="document-search-controls">
+                    <input
+                        type="search"
+                        placeholder="Search all indexed pages"
+                        value={documentSearchQuery}
+                        onChange={(event) =>
+                            setDocumentSearchQuery(
+                                event.target.value
+                            )
+                        }
+                        onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                                event.preventDefault();
+                                void runDocumentSearch();
+                            }
+                        }}
+                    />
+
+                    <select
+                        value={documentSearchMode}
+                        onChange={(event) =>
+                            setDocumentSearchMode(
+                                event.target.value as
+                                    | "all"
+                                    | "review"
+                                    | "poor"
+                                    | "unreviewed"
+                            )
+                        }
+                    >
+                        <option value="all">
+                            All indexed words
+                        </option>
+                        <option value="review">
+                            Confidence below 60%
+                        </option>
+                        <option value="poor">
+                            Confidence below 35%
+                        </option>
+                        <option value="unreviewed">
+                            Unreviewed words
+                        </option>
+                    </select>
+
+                    <button
+                        type="button"
+                        className="small-button primary"
+                        disabled={
+                            documentSearchLoading ||
+                            selectedDocumentId === null
+                        }
+                        onClick={() =>
+                            void runDocumentSearch()
+                        }
+                    >
+                        {documentSearchLoading
+                            ? "Searching..."
+                            : "Search document"}
+                    </button>
+                </div>
+
+                {(documentSearchMessage ||
+                    documentSearchResults.length > 0) && (
+                    <div className="document-search-status">
+                        <span>
+                            {documentSearchMessage ||
+                                `${documentSearchTotal} result(s)`}
+                        </span>
+                        {documentSearchTruncated && (
+                            <strong>
+                                Showing first{" "}
+                                {
+                                    documentSearchResults.length
+                                }
+                            </strong>
+                        )}
+                    </div>
+                )}
+
+                {documentSearchResults.length > 0 && (
+                    <div className="document-word-results">
+                        {documentSearchResults.map((result) => (
+                            <button
+                                type="button"
+                                key={`search-${result.pageNumber}-${result.id}`}
+                                onClick={() =>
+                                    openDocumentWord(result)
+                                }
+                            >
+                                <span className="document-word-result-text">
+                                    <strong>
+                                        {result.correctedText ||
+                                            result.text}
+                                    </strong>
+                                    {result.correctedText && (
+                                        <small>
+                                            OCR: {result.text}
+                                        </small>
+                                    )}
+                                </span>
+
+                                <span className="document-word-result-meta">
+                                    <em>
+                                        Page {result.pageNumber}
+                                    </em>
+                                    <em>
+                                        {result.confidence.toFixed(
+                                            1
+                                        )}
+                                        %
+                                    </em>
+                                    <em>{result.status}</em>
+                                </span>
+                            </button>
+                        ))}
+                    </div>
+                )}
+
+                {reviewQueueTotal > 0 && (
+                    <div className="document-review-queue">
+                        <div>
+                            <strong>
+                                Low-confidence review queue
+                            </strong>
+                            <span>
+                                {reviewQueueTotal} unreviewed
+                                issue(s) across indexed pages
+                            </span>
+                        </div>
+
+                        <div className="review-queue-chips">
+                            {reviewQueue
+                                .slice(0, 40)
+                                .map((result) => (
+                                    <button
+                                        type="button"
+                                        key={`queue-${result.pageNumber}-${result.id}`}
+                                        onClick={() =>
+                                            openDocumentWord(
+                                                result
+                                            )
+                                        }
+                                        title={`Page ${result.pageNumber} — ${result.confidence.toFixed(
+                                            1
+                                        )}%`}
+                                    >
+                                        <span>
+                                            {result.correctedText ||
+                                                result.text}
+                                        </span>
+                                        <small>
+                                            p.{result.pageNumber}
+                                        </small>
+                                    </button>
+                                ))}
+                        </div>
+
+                        {reviewQueue.length > 40 && (
+                            <small>
+                                Showing the first 40 highest-priority
+                                issues. Use document search for the
+                                complete loaded result set.
+                            </small>
+                        )}
+                    </div>
+                )}
+            </section>
+
+            <section className="word-inspector">
+                <div className="word-inspector-header">
+                    <div>
+                        <span className="eyebrow">
+                            Interactive word inspector
+                        </span>
+                        <strong>
+                            Page {currentReviewPage}
+                        </strong>
+                        <small>
+                            {wordIndexPage
+                                ? wordSearch.trim()
+                                    ? `${visibleWords.length} search result(s) on this indexed page`
+                                    : `${wordIndexPage.summary.totalWords} words, ${wordIndexPage.summary.lowConfidenceWords} needing review`
+                                : wordInspectorMessage}
+                        </small>
+                    </div>
+
+                    <div className="word-inspector-filters">
+                        <input
+                            type="search"
+                            placeholder="Search current indexed page"
+                            value={wordSearch}
+                            onChange={(event) => {
+                                const nextValue = event.target.value;
+                                setWordSearch(nextValue);
+
+                                // Show an immediate result when pasted text
+                                // matches a high-confidence word that would
+                                // otherwise be hidden by the default filter.
+                                if (nextValue.trim()) {
+                                    setWordFilter("all");
+                                }
+                            }}
+                        />
+
+                        <select
+                            value={wordFilter}
+                            onChange={(event) =>
+                                setWordFilter(
+                                    event.target.value as
+                                        | "all"
+                                        | "review"
+                                        | "poor"
+                                )
+                            }
+                        >
+                            <option value="all">All words</option>
+                            <option value="review">
+                                Below 60%
+                            </option>
+                            <option value="poor">
+                                Below 35%
+                            </option>
+                        </select>
+                    </div>
+                </div>
+
+                {wordIndexPage && (
+                    <div className="word-review-summary">
+                        <div>
+                            <span>Unreviewed</span>
+                            <strong>
+                                {reviewSummary.unreviewed}
+                            </strong>
+                        </div>
+                        <div>
+                            <span>Verified</span>
+                            <strong>
+                                {reviewSummary.verified}
+                            </strong>
+                        </div>
+                        <div>
+                            <span>Corrected</span>
+                            <strong>
+                                {reviewSummary.corrected}
+                            </strong>
+                        </div>
+                        <div>
+                            <span>Ignored</span>
+                            <strong>
+                                {reviewSummary.ignored}
+                            </strong>
+                        </div>
+                    </div>
+                )}
+
+                {wordInspectorLoading && (
+                    <div className="inline-message">
+                        Loading word data for page{" "}
+                        {currentReviewPage}...
+                    </div>
+                )}
+
+                {!wordInspectorLoading &&
+                    wordIndexPage &&
+                    visibleWords.length === 0 && (
+                        <div className="pdf-empty">
+                            {wordSearch.trim()
+                                ? `No indexed word matching “${wordSearch.trim()}” was found on page ${currentReviewPage}. Search currently applies to the active page only.`
+                                : "No words match the selected confidence filter."}
+                        </div>
+                    )}
+
+                {wordIndexPage && visibleWords.length > 0 && (
+                    <div className="word-inspector-layout">
+                        <div className="word-list">
+                            {visibleWords.map((word) => (
+                                <button
+                                    type="button"
+                                    key={word.id}
+                                    className={
+                                        selectedWordId === word.id
+                                            ? "selected"
+                                            : ""
+                                    }
+                                    onClick={() =>
+                                        setSelectedWordId(word.id)
+                                    }
+                                >
+                                    <span>
+                                        {word.correctedText ||
+                                            word.text}
+                                        {word.correctedText && (
+                                            <small>
+                                                original: {word.text}
+                                            </small>
+                                        )}
+                                    </span>
+                                    <div className="word-list-metadata">
+                                        <em
+                                            className={`word-status ${word.status.toLowerCase()}`}
+                                        >
+                                            {word.status}
+                                        </em>
+                                    <strong
+                                        className={
+                                            word.confidence >= 85
+                                                ? "excellent"
+                                                : word.confidence >= 75
+                                                  ? "good"
+                                                  : word.confidence >= 60
+                                                    ? "review"
+                                                    : "poor"
+                                        }
+                                    >
+                                        {word.confidence.toFixed(1)}%
+                                    </strong>
+                                    </div>
+                                </button>
+                            ))}
+                        </div>
+
+                        <aside className="word-detail">
+                            {selectedWord ? (
+                                <>
+                                    <div className="word-detail-title">
+                                        <span>
+                                            {selectedWord.status ===
+                                            "Corrected"
+                                                ? "Corrected word"
+                                                : "Detected word"}
+                                        </span>
+                                        <strong>
+                                            {selectedWord.correctedText ||
+                                                selectedWord.text}
+                                        </strong>
+                                        {selectedWord.correctedText && (
+                                            <small>
+                                                OCR detected:{" "}
+                                                {selectedWord.text}
+                                            </small>
+                                        )}
+                                    </div>
+
+                                    <dl>
+                                        <div>
+                                            <dt>Confidence</dt>
+                                            <dd>
+                                                {selectedWord.confidence.toFixed(
+                                                    1
+                                                )}
+                                                %
+                                            </dd>
+                                        </div>
+                                        <div>
+                                            <dt>Page</dt>
+                                            <dd>
+                                                {
+                                                    selectedWord.pageNumber
+                                                }
+                                            </dd>
+                                        </div>
+                                        <div>
+                                            <dt>Block / line</dt>
+                                            <dd>
+                                                {
+                                                    selectedWord.blockNumber
+                                                }{" "}
+                                                /{" "}
+                                                {
+                                                    selectedWord.lineNumber
+                                                }
+                                            </dd>
+                                        </div>
+                                        <div>
+                                            <dt>Word position</dt>
+                                            <dd>
+                                                {
+                                                    selectedWord.wordNumber
+                                                }
+                                            </dd>
+                                        </div>
+                                        <div className="wide">
+                                            <dt>Bounding box</dt>
+                                            <dd>
+                                                x=
+                                                {
+                                                    selectedWord.box.left
+                                                }
+                                                , y=
+                                                {selectedWord.box.top},
+                                                w=
+                                                {
+                                                    selectedWord.box.width
+                                                }
+                                                , h=
+                                                {
+                                                    selectedWord.box.height
+                                                }
+                                            </dd>
+                                        </div>
+                                        <div className="wide">
+                                            <dt>Review status</dt>
+                                            <dd>
+                                                {
+                                                    selectedWord.status
+                                                }
+                                            </dd>
+                                        </div>
+                                    </dl>
+
+                                    <div className="nearby-words">
+                                        <span>Nearby words</span>
+                                        <div>
+                                            {nearbyWords.map(
+                                                (word) => (
+                                                    <button
+                                                        type="button"
+                                                        key={`near-${word.id}`}
+                                                        className={
+                                                            word.id ===
+                                                            selectedWord.id
+                                                                ? "current"
+                                                                : ""
+                                                        }
+                                                        onClick={() =>
+                                                            setSelectedWordId(
+                                                                word.id
+                                                            )
+                                                        }
+                                                    >
+                                                        {word.text}
+                                                    </button>
+                                                )
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    <div className="intelligent-suggestions">
+                                        <div className="intelligent-suggestions-header">
+                                            <div>
+                                                <span>
+                                                    Intelligent OCR suggestions
+                                                </span>
+                                                <strong>
+                                                    Document-learned candidates
+                                                </strong>
+                                            </div>
+
+                                            <button
+                                                type="button"
+                                                className="small-button primary"
+                                                disabled={
+                                                    suggestionLoading ||
+                                                    wordReviewSaving
+                                                }
+                                                onClick={() =>
+                                                    void generateIntelligentSuggestions()
+                                                }
+                                            >
+                                                {suggestionLoading
+                                                    ? "Analyzing..."
+                                                    : "Suggest corrections"}
+                                            </button>
+                                        </div>
+
+                                        {suggestionContext.length > 0 && (
+                                            <div className="suggestion-context">
+                                                <span>Line context</span>
+                                                <div>
+                                                    {suggestionContext.map(
+                                                        (item) => (
+                                                            <em
+                                                                key={`suggestion-context-${item.id}`}
+                                                                className={
+                                                                    item.selected
+                                                                        ? "selected"
+                                                                        : ""
+                                                                }
+                                                            >
+                                                                {item.text}
+                                                            </em>
+                                                        )
+                                                    )}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {suggestionMessage && (
+                                            <div className="suggestion-message">
+                                                {suggestionMessage}
+                                            </div>
+                                        )}
+
+                                        {intelligentSuggestions.length > 0 && (
+                                            <div className="suggestion-list">
+                                                {intelligentSuggestions.map(
+                                                    (suggestion) => (
+                                                        <button
+                                                            type="button"
+                                                            key={`${suggestion.text}-${suggestion.score}`}
+                                                            onClick={() =>
+                                                                applyIntelligentSuggestion(
+                                                                    suggestion
+                                                                )
+                                                            }
+                                                        >
+                                                            <span className="suggestion-main">
+                                                                <strong>
+                                                                    {
+                                                                        suggestion.text
+                                                                    }
+                                                                </strong>
+                                                                <small>
+                                                                    {
+                                                                        suggestion.reason
+                                                                    }
+                                                                </small>
+                                                            </span>
+
+                                                            <span className="suggestion-metrics">
+                                                                <em>
+                                                                    Score{" "}
+                                                                    {
+                                                                        suggestion.score
+                                                                    }
+                                                                </em>
+                                                                <em>
+                                                                    Similarity{" "}
+                                                                    {
+                                                                        suggestion.similarity
+                                                                    }
+                                                                    %
+                                                                </em>
+                                                                <em>
+                                                                    {
+                                                                        suggestion.occurrences
+                                                                    }{" "}
+                                                                    occurrence(s)
+                                                                </em>
+                                                            </span>
+                                                        </button>
+                                                    )
+                                                )}
+                                            </div>
+                                        )}
+
+                                        <small>
+                                            Suggestions are learned locally
+                                            from trusted, verified, corrected,
+                                            and high-confidence words in this
+                                            document. Nothing is sent online.
+                                        </small>
+                                    </div>
+
+                                    <div className="correction-memory-panel">
+                                        <div className="correction-memory-header">
+                                            <div>
+                                                <span>
+                                                    Correction memory
+                                                </span>
+                                                <strong>
+                                                    Reuse and apply learned corrections
+                                                </strong>
+                                            </div>
+
+                                            <button
+                                                type="button"
+                                                className="small-button"
+                                                onClick={() =>
+                                                    void loadCorrectionMemory()
+                                                }
+                                            >
+                                                Load memory
+                                            </button>
+                                        </div>
+
+                                        {correctionMemory.length > 0 && (
+                                            <div className="correction-memory-list">
+                                                {correctionMemory
+                                                    .slice(0, 12)
+                                                    .map((memory) => (
+                                                        <button
+                                                            type="button"
+                                                            key={`${memory.normalizedSource}-${memory.correctedText}`}
+                                                            onClick={() =>
+                                                                useCorrectionMemory(
+                                                                    memory
+                                                                )
+                                                            }
+                                                        >
+                                                            <span>
+                                                                <del>
+                                                                    {
+                                                                        memory.sourceText
+                                                                    }
+                                                                </del>
+                                                                <strong>
+                                                                    {
+                                                                        memory.correctedText
+                                                                    }
+                                                                </strong>
+                                                            </span>
+                                                            <small>
+                                                                Used{" "}
+                                                                {
+                                                                    memory.timesApplied
+                                                                }{" "}
+                                                                time(s)
+                                                            </small>
+                                                        </button>
+                                                    ))}
+                                            </div>
+                                        )}
+
+                                        <div className="batch-correction-controls">
+                                            <label>
+                                                <span>
+                                                    Include matches up to
+                                                </span>
+                                                <select
+                                                    value={
+                                                        batchMaxConfidence
+                                                    }
+                                                    onChange={(event) =>
+                                                        setBatchMaxConfidence(
+                                                            Number(
+                                                                event
+                                                                    .target
+                                                                    .value
+                                                            )
+                                                        )
+                                                    }
+                                                >
+                                                    <option value={35}>
+                                                        35% confidence
+                                                    </option>
+                                                    <option value={60}>
+                                                        60% confidence
+                                                    </option>
+                                                    <option value={75}>
+                                                        75% confidence
+                                                    </option>
+                                                    <option value={100}>
+                                                        Any confidence
+                                                    </option>
+                                                </select>
+                                            </label>
+
+                                            <button
+                                                type="button"
+                                                className="small-button"
+                                                disabled={
+                                                    batchPreviewLoading ||
+                                                    !selectedWord ||
+                                                    !correctionDraft.trim()
+                                                }
+                                                onClick={() =>
+                                                    void previewBatchCorrection()
+                                                }
+                                            >
+                                                {batchPreviewLoading
+                                                    ? "Finding..."
+                                                    : "Find matching occurrences"}
+                                            </button>
+                                        </div>
+
+                                        {batchMessage && (
+                                            <div className="batch-correction-message">
+                                                {batchMessage}
+                                            </div>
+                                        )}
+
+                                        {batchMatches.length > 0 && (
+                                            <div className="batch-correction-preview">
+                                                <div className="batch-preview-header">
+                                                    <strong>
+                                                        {
+                                                            selectedBatchMatchIds.size
+                                                        }{" "}
+                                                        of{" "}
+                                                        {
+                                                            batchMatches.length
+                                                        }{" "}
+                                                        selected
+                                                    </strong>
+                                                    <div>
+                                                        <button
+                                                            type="button"
+                                                            className="small-button"
+                                                            onClick={() =>
+                                                                setSelectedBatchMatchIds(
+                                                                    new Set(
+                                                                        batchMatches.map(
+                                                                            (
+                                                                                match
+                                                                            ) =>
+                                                                                `${match.pageNumber}:${match.wordId}`
+                                                                        )
+                                                                    )
+                                                                )
+                                                            }
+                                                        >
+                                                            Select all
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            className="small-button"
+                                                            onClick={() =>
+                                                                setSelectedBatchMatchIds(
+                                                                    new Set()
+                                                                )
+                                                            }
+                                                        >
+                                                            Clear
+                                                        </button>
+                                                    </div>
+                                                </div>
+
+                                                <div className="batch-match-list">
+                                                    {batchMatches.map(
+                                                        (match) => {
+                                                            const key = `${match.pageNumber}:${match.wordId}`;
+
+                                                            return (
+                                                                <label
+                                                                    key={
+                                                                        key
+                                                                    }
+                                                                >
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        checked={selectedBatchMatchIds.has(
+                                                                            key
+                                                                        )}
+                                                                        onChange={() =>
+                                                                            toggleBatchMatch(
+                                                                                match
+                                                                            )
+                                                                        }
+                                                                    />
+                                                                    <span>
+                                                                        Page{" "}
+                                                                        {
+                                                                            match.pageNumber
+                                                                        }
+                                                                    </span>
+                                                                    <strong>
+                                                                        {
+                                                                            match.text
+                                                                        }
+                                                                    </strong>
+                                                                    <em>
+                                                                        {match.confidence.toFixed(
+                                                                            1
+                                                                        )}
+                                                                        %
+                                                                    </em>
+                                                                </label>
+                                                            );
+                                                        }
+                                                    )}
+                                                </div>
+
+                                                <button
+                                                    type="button"
+                                                    className="small-button primary"
+                                                    disabled={
+                                                        batchApplyLoading ||
+                                                        selectedBatchMatchIds.size ===
+                                                            0
+                                                    }
+                                                    onClick={() =>
+                                                        void applyBatchCorrections()
+                                                    }
+                                                >
+                                                    {batchApplyLoading
+                                                        ? "Applying..."
+                                                        : `Apply correction to ${selectedBatchMatchIds.size} occurrence(s)`}
+                                                </button>
+                                            </div>
+                                        )}
+
+                                        <div className="correction-rule-library">
+                                            <div className="rule-library-header">
+                                                <div>
+                                                    <span>
+                                                        Correction rules
+                                                    </span>
+                                                    <strong>
+                                                        Save reusable document rules
+                                                    </strong>
+                                                </div>
+
+                                                <div>
+                                                    <button
+                                                        type="button"
+                                                        className="small-button"
+                                                        onClick={() =>
+                                                            void loadCorrectionRules()
+                                                        }
+                                                    >
+                                                        Load rules
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        className="small-button primary"
+                                                        disabled={
+                                                            !selectedWord ||
+                                                            !correctionDraft.trim()
+                                                        }
+                                                        onClick={() =>
+                                                            void saveCurrentCorrectionRule()
+                                                        }
+                                                    >
+                                                        Save current rule
+                                                    </button>
+                                                </div>
+                                            </div>
+
+                                            {ruleMessage && (
+                                                <div className="rule-message">
+                                                    {ruleMessage}
+                                                </div>
+                                            )}
+
+                                            {correctionRules.length > 0 && (
+                                                <div className="rule-list">
+                                                    {correctionRules.map(
+                                                        (rule) => (
+                                                            <article
+                                                                key={
+                                                                    rule.id
+                                                                }
+                                                                className={
+                                                                    rule.isEnabled
+                                                                        ? "enabled"
+                                                                        : "disabled"
+                                                                }
+                                                            >
+                                                                <button
+                                                                    type="button"
+                                                                    className="rule-main"
+                                                                    onClick={() =>
+                                                                        useCorrectionRule(
+                                                                            rule
+                                                                        )
+                                                                    }
+                                                                >
+                                                                    <span>
+                                                                        <del>
+                                                                            {
+                                                                                rule.sourceText
+                                                                            }
+                                                                        </del>
+                                                                        <strong>
+                                                                            {
+                                                                                rule.correctedText
+                                                                            }
+                                                                        </strong>
+                                                                    </span>
+                                                                    <small>
+                                                                        Up to{" "}
+                                                                        {
+                                                                            rule.maxConfidence
+                                                                        }
+                                                                        %
+                                                                    </small>
+                                                                </button>
+
+                                                                <div>
+                                                                    <button
+                                                                        type="button"
+                                                                        className="small-button"
+                                                                        onClick={() =>
+                                                                            void toggleCorrectionRule(
+                                                                                rule
+                                                                            )
+                                                                        }
+                                                                    >
+                                                                        {rule.isEnabled
+                                                                            ? "Disable"
+                                                                            : "Enable"}
+                                                                    </button>
+                                                                    <button
+                                                                        type="button"
+                                                                        className="small-button danger"
+                                                                        onClick={() =>
+                                                                            void deleteCorrectionRule(
+                                                                                rule
+                                                                            )
+                                                                        }
+                                                                    >
+                                                                        Delete
+                                                                    </button>
+                                                                </div>
+                                                            </article>
+                                                        )
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        <div className="batch-transaction-history">
+                                            <div className="batch-history-header">
+                                                <div>
+                                                    <span>
+                                                        Batch history
+                                                    </span>
+                                                    <strong>
+                                                        Undo a complete batch safely
+                                                    </strong>
+                                                </div>
+
+                                                <button
+                                                    type="button"
+                                                    className="small-button"
+                                                    onClick={() =>
+                                                        void loadBatchTransactions()
+                                                    }
+                                                >
+                                                    Load history
+                                                </button>
+                                            </div>
+
+                                            {batchTransactions.length > 0 && (
+                                                <div className="batch-history-list">
+                                                    {batchTransactions
+                                                        .slice(0, 10)
+                                                        .map(
+                                                            (
+                                                                transaction
+                                                            ) => (
+                                                                <article
+                                                                    key={
+                                                                        transaction.id
+                                                                    }
+                                                                >
+                                                                    <div>
+                                                                        <span>
+                                                                            <del>
+                                                                                {
+                                                                                    transaction.sourceText
+                                                                                }
+                                                                            </del>
+                                                                            <strong>
+                                                                                {
+                                                                                    transaction.correctedText
+                                                                                }
+                                                                            </strong>
+                                                                        </span>
+                                                                        <small>
+                                                                            {
+                                                                                transaction.applied
+                                                                            }{" "}
+                                                                            change(s) ·{" "}
+                                                                            {new Date(
+                                                                                transaction.createdAt
+                                                                            ).toLocaleString()}
+                                                                        </small>
+                                                                    </div>
+
+                                                                    {transaction.undoneAt ? (
+                                                                        <em>
+                                                                            Undone
+                                                                        </em>
+                                                                    ) : (
+                                                                        <button
+                                                                            type="button"
+                                                                            className="small-button danger"
+                                                                            disabled={
+                                                                                batchUndoLoadingId ===
+                                                                                transaction.id
+                                                                            }
+                                                                            onClick={() =>
+                                                                                void undoBatchTransaction(
+                                                                                    transaction
+                                                                                )
+                                                                            }
+                                                                        >
+                                                                            {batchUndoLoadingId ===
+                                                                            transaction.id
+                                                                                ? "Undoing..."
+                                                                                : "Undo batch"}
+                                                                        </button>
+                                                                    )}
+                                                                </article>
+                                                            )
+                                                        )}
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        <small>
+                                            Batch changes require preview and
+                                            explicit selection. Every change
+                                            is recorded and can be undone as
+                                            one transaction.
+                                        </small>
+                                    </div>
+
+                                    <div className="word-correction-editor">
+                                        <div className="word-correction-header">
+                                            <div>
+                                                <span>
+                                                    Correction and verification
+                                                </span>
+                                                <strong>
+                                                    Status:{" "}
+                                                    {selectedWord.status}
+                                                </strong>
+                                            </div>
+
+                                            <button
+                                                type="button"
+                                                className="small-button"
+                                                disabled={
+                                                    wordReviewSaving
+                                                }
+                                                onClick={
+                                                    goToNextReviewWord
+                                                }
+                                            >
+                                                Next issue
+                                            </button>
+                                        </div>
+
+                                        <label>
+                                            <span>
+                                                Corrected text
+                                            </span>
+                                            <textarea
+                                                rows={3}
+                                                value={
+                                                    correctionDraft
+                                                }
+                                                disabled={
+                                                    wordReviewSaving
+                                                }
+                                                onChange={(event) =>
+                                                    setCorrectionDraft(
+                                                        event.target
+                                                            .value
+                                                    )
+                                                }
+                                                onKeyDown={(event) => {
+                                                    if (
+                                                        event.ctrlKey &&
+                                                        event.key ===
+                                                            "Enter"
+                                                    ) {
+                                                        event.preventDefault();
+                                                        void saveWordReview(
+                                                            "correct"
+                                                        );
+                                                    }
+                                                }}
+                                            />
+                                        </label>
+
+                                        <div className="word-correction-actions">
+                                            <button
+                                                type="button"
+                                                className="small-button primary"
+                                                disabled={
+                                                    wordReviewSaving ||
+                                                    !correctionDraft.trim()
+                                                }
+                                                onClick={() =>
+                                                    void saveWordReview(
+                                                        "correct"
+                                                    )
+                                                }
+                                            >
+                                                Save correction
+                                            </button>
+
+                                            <button
+                                                type="button"
+                                                className="small-button success"
+                                                disabled={
+                                                    wordReviewSaving
+                                                }
+                                                onClick={() =>
+                                                    void saveWordReview(
+                                                        "verify"
+                                                    )
+                                                }
+                                            >
+                                                Verify OCR
+                                            </button>
+
+                                            <button
+                                                type="button"
+                                                className="small-button"
+                                                disabled={
+                                                    wordReviewSaving
+                                                }
+                                                onClick={() =>
+                                                    void saveWordReview(
+                                                        "ignore"
+                                                    )
+                                                }
+                                            >
+                                                Ignore
+                                            </button>
+
+                                            <button
+                                                type="button"
+                                                className="small-button danger"
+                                                disabled={
+                                                    wordReviewSaving ||
+                                                    selectedWord.status ===
+                                                        "Unreviewed"
+                                                }
+                                                onClick={() =>
+                                                    void saveWordReview(
+                                                        "reset"
+                                                    )
+                                                }
+                                            >
+                                                Reset review
+                                            </button>
+                                        </div>
+
+                                        <small>
+                                            Press Ctrl+Enter to save a
+                                            correction. Changes are stored
+                                            in the page word database and
+                                            correction history.
+                                        </small>
+
+                                        {wordReviewMessage && (
+                                            <div className="word-review-message">
+                                                {
+                                                    wordReviewMessage
+                                                }
+                                            </div>
+                                        )}
+                                    </div>
+                                </>
+                            ) : (
+                                <div className="pdf-empty">
+                                    Select a word to inspect it.
+                                </div>
+                            )}
+                        </aside>
+                    </div>
+                )}
             </section>
 
             <section className="background-job-center">
@@ -1392,6 +3649,59 @@ export default function ReviewTab({
                 )}
             </div>
 
+            <div className="confidence-overlay-toolbar">
+                <label className="overlay-toggle">
+                    <input
+                        type="checkbox"
+                        checked={confidenceOverlayEnabled}
+                        disabled={!wordIndexPage}
+                        onChange={(event) =>
+                            setConfidenceOverlayEnabled(
+                                event.target.checked
+                            )
+                        }
+                    />
+                    <span>Confidence overlay</span>
+                </label>
+
+                <select
+                    value={confidenceOverlayFilter}
+                    disabled={
+                        !confidenceOverlayEnabled ||
+                        !wordIndexPage
+                    }
+                    onChange={(event) =>
+                        setConfidenceOverlayFilter(
+                            event.target.value as
+                                | "poor"
+                                | "review"
+                                | "all"
+                        )
+                    }
+                >
+                    <option value="poor">
+                        Critical only — below 35%
+                    </option>
+                    <option value="review">
+                        Needs review — below 60%
+                    </option>
+                    <option value="all">All OCR words</option>
+                </select>
+
+                <div className="overlay-legend">
+                    <span className="poor">Below 35%</span>
+                    <span className="review">35–59%</span>
+                    <span className="good">60–74%</span>
+                    <span className="excellent">75%+</span>
+                </div>
+
+                <small>
+                    {wordIndexPage
+                        ? `${overlayWords.length} box(es) on page ${currentReviewPage}`
+                        : "Index this page to enable word boxes."}
+                </small>
+            </div>
+
             <div className="dual-pdf-viewer">
                 <PreviewPane
                     title="Original Scan"
@@ -1427,6 +3737,19 @@ export default function ReviewTab({
                         syncEnabled ? changeSharedScale : setOutputScale
                     }
                     onPageCountChange={setOutputPageCount}
+                    overlayEnabled={
+                        confidenceOverlayEnabled &&
+                        Boolean(wordIndexPage)
+                    }
+                    overlayWords={overlayWords}
+                    overlayImageWidth={
+                        wordIndexPage?.imageWidth || 0
+                    }
+                    overlayImageHeight={
+                        wordIndexPage?.imageHeight || 0
+                    }
+                    selectedOverlayWordId={selectedWordId}
+                    onOverlayWordSelect={selectOverlayWord}
                 />
             </div>
 
