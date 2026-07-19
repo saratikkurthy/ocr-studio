@@ -132,6 +132,54 @@ function runCommand(command) {
   });
 }
 let activeOcrProcess = null;
+
+// One worker is allowed per project. The worker survives tab changes because it
+// runs in Electron's main process rather than in React.
+const activeQueueWorkers = new Map();
+const queueStopRequests = new Set();
+
+function broadcastToWindows(channel, payload) {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.webContents.send(channel, payload);
+    }
+  }
+}
+
+function normalizeQueuePositions(queue) {
+  return queue.map((item, index) => ({
+    ...item,
+    position: index + 1,
+  }));
+}
+
+function updateQueueItem(projectPath, queueItemId, updates) {
+  const queue = readOcrQueue(projectPath);
+  const updatedQueue = normalizeQueuePositions(
+    queue.map((item) =>
+      item.id === queueItemId
+        ? { ...item, ...updates }
+        : item
+    )
+  );
+
+  saveOcrQueue(projectPath, updatedQueue);
+  broadcastToWindows("queue:updated", {
+    projectPath,
+    queue: updatedQueue,
+  });
+
+  return updatedQueue;
+}
+
+function broadcastQueueWorkerStatus(projectPath, status, message, queueItemId) {
+  broadcastToWindows("queue:workerStatus", {
+    projectPath,
+    status,
+    message,
+    queueItemId,
+  });
+}
 ipcMain.handle("workspace:selectFolder", async () => {
   const result = await dialog.showOpenDialog({
     title: "Select OCR Studio Workspace",
@@ -1069,6 +1117,557 @@ ipcMain.handle("analysis:analyzeProject", async (event, data) => {
     failedCount: failedAnalyses.length,
   };
 });
+
+async function runQueuedDocument(projectPath, queueItem) {
+  const documentsPath = path.join(projectPath, "documents.json");
+
+  if (!fs.existsSync(documentsPath)) {
+    return {
+      success: false,
+      cancelled: false,
+      message: "documents.json was not found.",
+    };
+  }
+
+  const documents = JSON.parse(fs.readFileSync(documentsPath, "utf-8"));
+  const document = documents.find((item) => item.id === queueItem.documentId);
+
+  if (!document) {
+    return {
+      success: false,
+      cancelled: false,
+      message: "The imported document was not found.",
+    };
+  }
+
+  if (!document.fileName.toLowerCase().endsWith(".pdf")) {
+    return {
+      success: false,
+      cancelled: false,
+      message: "Only PDF documents can be processed by the queue worker.",
+    };
+  }
+
+  const exportFolder = path.join(projectPath, "Export");
+  const logsFolder = path.join(projectPath, "Logs");
+  fs.mkdirSync(exportFolder, { recursive: true });
+  fs.mkdirSync(logsFolder, { recursive: true });
+
+  const logPath = path.join(logsFolder, "ocr-run.log");
+  const compression = queueItem.compression || "medium";
+  const outputType = queueItem.outputType || "searchable_pdf";
+
+  const compressionArgs =
+    {
+      low: ["--optimize", "1", "--jpeg-quality", "95", "--png-quality", "95"],
+      medium: ["--optimize", "2", "--jpeg-quality", "85", "--png-quality", "85"],
+      high: ["--optimize", "3", "--jpeg-quality", "65", "--png-quality", "65"],
+      maximum: ["--optimize", "3", "--jpeg-quality", "45", "--png-quality", "45"],
+    }[compression] ||
+    ["--optimize", "2", "--jpeg-quality", "85", "--png-quality", "85"];
+
+  const startedAt = new Date();
+  const inputPath = document.destinationPath;
+  const baseName = document.fileName.replace(/\.pdf$/i, "");
+  const searchablePath = path.join(exportFolder, `${baseName}_searchable.pdf`);
+  const compressedPath = path.join(
+    exportFolder,
+    `${baseName}_searchable_compressed.pdf`
+  );
+  const sidecarTxtPath = path.join(exportFolder, `${baseName}_ocr_text.txt`);
+
+  for (const outputPath of [searchablePath, compressedPath, sidecarTxtPath]) {
+    if (fs.existsSync(outputPath)) {
+      fs.unlinkSync(outputPath);
+    }
+  }
+
+  updateDocumentStatus(projectPath, document.id, "Processing", {
+    processingStartedAt: startedAt.toISOString(),
+    failedAt: undefined,
+    lastError: undefined,
+  });
+
+  broadcastToWindows("ocr:documentStatus", {
+    documentId: document.id,
+    status: "Processing",
+  });
+
+  const inputWslPath = windowsPathToWslPath(inputPath);
+  const totalPages = await getPdfPageCount(inputWslPath);
+
+  const runQueueSpawn = (command, args, label) =>
+    new Promise((resolve) => {
+      fs.appendFileSync(
+        logPath,
+        `\n\n${label}:\n${command} ${args.join(" ")}\n\n`,
+        "utf-8"
+      );
+
+      const child = spawn(command, args, { windowsHide: true });
+      activeOcrProcess = child;
+
+      let settled = false;
+      const finish = (result) => {
+        if (settled) return;
+        settled = true;
+        if (activeOcrProcess === child) {
+          activeOcrProcess = null;
+        }
+        resolve(result);
+      };
+
+      child.stdout.on("data", (chunk) => {
+        fs.appendFileSync(logPath, chunk.toString(), "utf-8");
+      });
+
+      child.stderr.on("data", (chunk) => {
+        const text = chunk.toString();
+        fs.appendFileSync(logPath, text, "utf-8");
+
+        const pageMatch = text.match(/^\s*(\d+)\s+\[tesseract\]/m);
+
+        if (pageMatch) {
+          const currentPage = Number(pageMatch[1]);
+          const percent =
+            totalPages && currentPage
+              ? Math.min(100, Math.round((currentPage / totalPages) * 100))
+              : undefined;
+
+          broadcastToWindows("ocr:progress", {
+            fileName: document.fileName,
+            currentPage,
+            totalPages,
+            percent,
+            message: totalPages
+              ? `Processing page ${currentPage} of ${totalPages} — ${percent}%`
+              : `Processing page ${currentPage}`,
+          });
+        } else if (text.includes("Postprocessing")) {
+          broadcastToWindows("ocr:progress", {
+            fileName: document.fileName,
+            message: "Postprocessing PDF...",
+          });
+        }
+      });
+
+      child.on("error", (error) => {
+        fs.appendFileSync(
+          logPath,
+          `\nPROCESS ERROR: ${error.message}\n`,
+          "utf-8"
+        );
+        finish({ code: -1, error: error.message });
+      });
+
+      child.on("close", (code) => {
+        fs.appendFileSync(
+          logPath,
+          `\nPROCESS EXIT CODE: ${code}\n`,
+          "utf-8"
+        );
+        finish({ code });
+      });
+    });
+
+  broadcastToWindows("ocr:progress", {
+    fileName: document.fileName,
+    currentPage: 0,
+    totalPages,
+    percent: 0,
+    message: totalPages
+      ? `Starting queued OCR: 0 of ${totalPages} pages`
+      : "Starting queued OCR...",
+  });
+
+  const ocrArgs = [
+    "-d",
+    "Ubuntu-24.04",
+    "--",
+    "ocrmypdf",
+    "--force-ocr",
+    "--deskew",
+    "--oversample",
+    "300",
+    ...compressionArgs,
+    "--output-type",
+    "pdf",
+    "-l",
+    queueItem.language || "tel",
+  ];
+
+  if (outputType === "searchable_pdf_txt") {
+    ocrArgs.push("--sidecar", windowsPathToWslPath(sidecarTxtPath));
+  }
+
+  ocrArgs.push(inputWslPath, windowsPathToWslPath(searchablePath));
+
+  const ocrResult = await runQueueSpawn(
+    "wsl.exe",
+    ocrArgs,
+    `QUEUED OCR COMMAND for ${document.fileName}`
+  );
+
+  if (queueStopRequests.has(projectPath)) {
+    const endedAt = new Date();
+
+    updateDocumentStatus(projectPath, document.id, "Cancelled", {
+      lastError: "Queue processing was stopped.",
+    });
+
+    broadcastToWindows("ocr:documentStatus", {
+      documentId: document.id,
+      status: "Cancelled",
+    });
+
+    addOcrJob(projectPath, {
+      id: Date.now() + Math.floor(Math.random() * 10000),
+      documentId: document.id,
+      fileName: document.fileName,
+      status: "Cancelled",
+      startedAt: startedAt.toISOString(),
+      endedAt: endedAt.toISOString(),
+      durationMs: endedAt.getTime() - startedAt.getTime(),
+      message: "Queue processing was stopped.",
+    });
+
+    return {
+      success: false,
+      cancelled: true,
+      message: "Queue processing was stopped.",
+    };
+  }
+
+  if (ocrResult.code !== 0 || !fs.existsSync(searchablePath)) {
+    const endedAt = new Date();
+    const message =
+      ocrResult.error ||
+      `OCR failed with exit code ${ocrResult.code} for ${document.fileName}.`;
+
+    updateDocumentStatus(projectPath, document.id, "Failed", {
+      failedAt: endedAt.toISOString(),
+      lastError: message,
+    });
+
+    broadcastToWindows("ocr:documentStatus", {
+      documentId: document.id,
+      status: "Failed",
+    });
+
+    addOcrJob(projectPath, {
+      id: Date.now() + Math.floor(Math.random() * 10000),
+      documentId: document.id,
+      fileName: document.fileName,
+      status: "Failed",
+      startedAt: startedAt.toISOString(),
+      endedAt: endedAt.toISOString(),
+      durationMs: endedAt.getTime() - startedAt.getTime(),
+      message,
+    });
+
+    return { success: false, cancelled: false, message };
+  }
+
+  const gsProfiles = {
+    low: "/prepress",
+    medium: "/ebook",
+    high: "/screen",
+    maximum: "/screen",
+  };
+
+  const gsArgs = [
+    "-d",
+    "Ubuntu-24.04",
+    "--",
+    "gs",
+    "-sDEVICE=pdfwrite",
+    "-dCompatibilityLevel=1.4",
+    `-dPDFSETTINGS=${gsProfiles[compression] || "/ebook"}`,
+    "-dNOPAUSE",
+    "-dQUIET",
+    "-dBATCH",
+    `-sOutputFile=${windowsPathToWslPath(compressedPath)}`,
+    windowsPathToWslPath(searchablePath),
+  ];
+
+  const gsResult = await runQueueSpawn(
+    "wsl.exe",
+    gsArgs,
+    `QUEUED GHOSTSCRIPT COMMAND for ${document.fileName}`
+  );
+
+  if (queueStopRequests.has(projectPath)) {
+    const endedAt = new Date();
+
+    updateDocumentStatus(projectPath, document.id, "Cancelled", {
+      lastError: "Queue processing was stopped.",
+    });
+
+    broadcastToWindows("ocr:documentStatus", {
+      documentId: document.id,
+      status: "Cancelled",
+    });
+
+    addOcrJob(projectPath, {
+      id: Date.now() + Math.floor(Math.random() * 10000),
+      documentId: document.id,
+      fileName: document.fileName,
+      status: "Cancelled",
+      startedAt: startedAt.toISOString(),
+      endedAt: endedAt.toISOString(),
+      durationMs: endedAt.getTime() - startedAt.getTime(),
+      message: "Queue processing was stopped.",
+    });
+
+    return {
+      success: false,
+      cancelled: true,
+      message: "Queue processing was stopped.",
+    };
+  }
+
+  const finalPath =
+    gsResult.code === 0 && fs.existsSync(compressedPath)
+      ? compressedPath
+      : searchablePath;
+
+  const inputSize = fs.statSync(inputPath).size;
+  const ocrSize = fs.statSync(searchablePath).size;
+  const outputSize = fs.statSync(finalPath).size;
+  const reductionPercent = ((inputSize - outputSize) / inputSize) * 100;
+  const endedAt = new Date();
+
+  updateDocumentStatus(projectPath, document.id, "Converted", {
+    completedAt: endedAt.toISOString(),
+    outputPath: finalPath,
+    searchablePath,
+    compressedPath: fs.existsSync(compressedPath)
+      ? compressedPath
+      : undefined,
+    sidecarTxtPath: fs.existsSync(sidecarTxtPath)
+      ? sidecarTxtPath
+      : undefined,
+    inputSize,
+    outputSize,
+    reductionPercent,
+    lastError: undefined,
+  });
+
+  broadcastToWindows("ocr:documentStatus", {
+    documentId: document.id,
+    status: "Converted",
+  });
+
+  addOcrJob(projectPath, {
+    id: Date.now() + Math.floor(Math.random() * 10000),
+    documentId: document.id,
+    fileName: document.fileName,
+    status: "Completed",
+    startedAt: startedAt.toISOString(),
+    endedAt: endedAt.toISOString(),
+    durationMs: endedAt.getTime() - startedAt.getTime(),
+    outputPath: finalPath,
+    inputSize,
+    ocrSize,
+    outputSize,
+    reductionPercent,
+    sidecarTxtPath: fs.existsSync(sidecarTxtPath)
+      ? sidecarTxtPath
+      : undefined,
+  });
+
+  return {
+    success: true,
+    cancelled: false,
+    message: `OCR completed for ${document.fileName}.`,
+    outputPath: finalPath,
+  };
+}
+
+async function runQueueWorker(projectPath) {
+  if (activeQueueWorkers.has(projectPath)) {
+    return activeQueueWorkers.get(projectPath);
+  }
+
+  queueStopRequests.delete(projectPath);
+
+  const workerPromise = (async () => {
+    broadcastQueueWorkerStatus(
+      projectPath,
+      "Running",
+      "OCR queue worker started."
+    );
+
+    try {
+      while (!queueStopRequests.has(projectPath)) {
+        const queue = readOcrQueue(projectPath);
+        const nextItem = [...queue]
+          .filter((item) => item.status === "Waiting")
+          .sort((a, b) => a.position - b.position)[0];
+
+        if (!nextItem) {
+          broadcastQueueWorkerStatus(
+            projectPath,
+            "Idle",
+            "The OCR queue is complete."
+          );
+          break;
+        }
+
+        updateQueueItem(projectPath, nextItem.id, {
+          status: "Processing",
+          startedAt: new Date().toISOString(),
+          completedAt: undefined,
+          error: undefined,
+          outputPath: undefined,
+        });
+
+        broadcastQueueWorkerStatus(
+          projectPath,
+          "Running",
+          `Processing ${nextItem.fileName}`,
+          nextItem.id
+        );
+
+        let result;
+
+        try {
+          result = await runQueuedDocument(projectPath, nextItem);
+        } catch (error) {
+          result = {
+            success: false,
+            cancelled: false,
+            message:
+              error instanceof Error ? error.message : String(error),
+          };
+        }
+
+        if (result.cancelled || queueStopRequests.has(projectPath)) {
+          updateQueueItem(projectPath, nextItem.id, {
+            status: "Cancelled",
+            completedAt: new Date().toISOString(),
+            error: result.message,
+          });
+          break;
+        }
+
+        updateQueueItem(projectPath, nextItem.id, {
+          status: result.success ? "Completed" : "Failed",
+          completedAt: new Date().toISOString(),
+          error: result.success ? undefined : result.message,
+          outputPath: result.outputPath,
+        });
+      }
+    } finally {
+      const stopped = queueStopRequests.has(projectPath);
+      activeQueueWorkers.delete(projectPath);
+      queueStopRequests.delete(projectPath);
+
+      broadcastQueueWorkerStatus(
+        projectPath,
+        stopped ? "Stopped" : "Idle",
+        stopped
+          ? "OCR queue worker stopped."
+          : "OCR queue worker is idle."
+      );
+    }
+  })();
+
+  activeQueueWorkers.set(projectPath, workerPromise);
+  return workerPromise;
+}
+
+ipcMain.handle("queue:start", async (_, data) => {
+  const projectPath = data?.projectPath;
+
+  if (!projectPath) {
+    return {
+      success: false,
+      message: "Project path is required.",
+      status: "Idle",
+      queue: [],
+    };
+  }
+
+  if (activeQueueWorkers.has(projectPath)) {
+    return {
+      success: false,
+      message: "The OCR queue worker is already running.",
+      status: "Running",
+      queue: readOcrQueue(projectPath),
+    };
+  }
+
+  const waitingCount = readOcrQueue(projectPath).filter(
+    (item) => item.status === "Waiting"
+  ).length;
+
+  if (waitingCount === 0) {
+    return {
+      success: false,
+      message: "There are no waiting queue items.",
+      status: "Idle",
+      queue: readOcrQueue(projectPath),
+    };
+  }
+
+  // Do not await: the IPC call returns immediately while the worker continues.
+  void runQueueWorker(projectPath);
+
+  return {
+    success: true,
+    message: `Queue worker started for ${waitingCount} PDF(s).`,
+    status: "Running",
+    queue: readOcrQueue(projectPath),
+  };
+});
+
+ipcMain.handle("queue:stop", async (_, data) => {
+  const projectPath = data?.projectPath;
+
+  if (!projectPath || !activeQueueWorkers.has(projectPath)) {
+    return {
+      success: false,
+      message: "The OCR queue worker is not running.",
+      status: "Idle",
+      queue: projectPath ? readOcrQueue(projectPath) : [],
+    };
+  }
+
+  queueStopRequests.add(projectPath);
+
+  if (activeOcrProcess) {
+    activeOcrProcess.kill("SIGTERM");
+  }
+
+  broadcastQueueWorkerStatus(
+    projectPath,
+    "Stopping",
+    "Stopping the OCR queue after the active process exits."
+  );
+
+  return {
+    success: true,
+    message: "Queue stop requested.",
+    status: "Stopping",
+    queue: readOcrQueue(projectPath),
+  };
+});
+
+ipcMain.handle("queue:status", async (_, data) => {
+  const projectPath = data?.projectPath;
+  const isRunning = Boolean(
+    projectPath && activeQueueWorkers.has(projectPath)
+  );
+
+  return {
+    status: isRunning ? "Running" : "Idle",
+    running: isRunning,
+    queue: projectPath ? readOcrQueue(projectPath) : [],
+  };
+});
+
+
 ipcMain.handle("queue:list", async (_, data) => {
   return readOcrQueue(data.projectPath);
 });

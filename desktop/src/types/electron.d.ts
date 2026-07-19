@@ -286,6 +286,49 @@ declare global {
                 }) => void
             ) => void;
 
+
+            startOcrQueue: (data: {
+                projectPath: string;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                status: "Running" | "Idle" | "Stopping" | "Stopped";
+                queue: OcrQueueItem[];
+            }>;
+
+            stopOcrQueue: (data: {
+                projectPath: string;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                status: "Running" | "Idle" | "Stopping" | "Stopped";
+                queue: OcrQueueItem[];
+            }>;
+
+            getOcrQueueStatus: (data: {
+                projectPath: string;
+            }) => Promise<{
+                status: "Running" | "Idle";
+                running: boolean;
+                queue: OcrQueueItem[];
+            }>;
+
+            onOcrQueueUpdated: (
+                callback: (data: {
+                    projectPath: string;
+                    queue: OcrQueueItem[];
+                }) => void
+            ) => void;
+
+            onOcrQueueWorkerStatus: (
+                callback: (data: {
+                    projectPath: string;
+                    status: "Running" | "Idle" | "Stopping" | "Stopped";
+                    message: string;
+                    queueItemId?: number;
+                }) => void
+            ) => void;
+
             analyzeProject: (data: {
                 projectPath: string;
                 documentIds?: number[];

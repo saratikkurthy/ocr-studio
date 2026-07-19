@@ -28,6 +28,25 @@ contextBridge.exposeInMainWorld("ocrStudio", {
 
   clearCompletedQueueItems: (data) =>
     ipcRenderer.invoke("queue:clearCompleted", data),
+
+  startOcrQueue: (data) =>
+    ipcRenderer.invoke("queue:start", data),
+
+  stopOcrQueue: (data) =>
+    ipcRenderer.invoke("queue:stop", data),
+
+  getOcrQueueStatus: (data) =>
+    ipcRenderer.invoke("queue:status", data),
+
+  onOcrQueueUpdated: (callback) => {
+    ipcRenderer.removeAllListeners("queue:updated");
+    ipcRenderer.on("queue:updated", (_event, data) => callback(data));
+  },
+
+  onOcrQueueWorkerStatus: (callback) => {
+    ipcRenderer.removeAllListeners("queue:workerStatus");
+    ipcRenderer.on("queue:workerStatus", (_event, data) => callback(data));
+  },
   analyzeProject: (data) =>
     ipcRenderer.invoke("analysis:analyzeProject", data),
 

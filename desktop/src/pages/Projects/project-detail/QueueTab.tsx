@@ -11,6 +11,10 @@ type QueueTabProps = {
         completed: number;
         failed: number;
     };
+    workerStatus: "Running" | "Idle" | "Stopping" | "Stopped";
+    workerMessage: string;
+    onStartWorker: () => void;
+    onStopWorker: () => void;
     onClearFinished: () => void;
     onRemove: (item: OcrQueueItem) => void;
     onOpen: (path: string) => void;
@@ -22,6 +26,10 @@ export default function QueueTab({
     queueMessage,
     queueUpdating,
     counts,
+    workerStatus,
+    workerMessage,
+    onStartWorker,
+    onStopWorker,
     onClearFinished,
     onRemove,
     onOpen,
@@ -34,15 +42,46 @@ export default function QueueTab({
                     <h2>OCR Queue</h2>
                     <p>Batch OCR items and their current processing state.</p>
                 </div>
-                {queue.length > 0 && (
-                    <button
-                        className="small-button"
-                        onClick={onClearFinished}
-                        disabled={queueUpdating}
-                    >
-                        Clear Finished
-                    </button>
-                )}
+                <div className="panel-actions">
+                    {workerStatus === "Running" || workerStatus === "Stopping" ? (
+                        <button
+                            className="small-button danger"
+                            onClick={onStopWorker}
+                            disabled={workerStatus === "Stopping"}
+                        >
+                            {workerStatus === "Stopping"
+                                ? "Stopping..."
+                                : "Stop Queue"}
+                        </button>
+                    ) : (
+                        <button
+                            className="primary"
+                            onClick={onStartWorker}
+                            disabled={queueUpdating || counts.waiting === 0}
+                        >
+                            Start Queue
+                        </button>
+                    )}
+
+                    {queue.length > 0 && (
+                        <button
+                            className="small-button"
+                            onClick={onClearFinished}
+                            disabled={
+                                queueUpdating ||
+                                workerStatus === "Running" ||
+                                workerStatus === "Stopping"
+                            }
+                        >
+                            Clear Finished
+                        </button>
+                    )}
+                </div>
+            </div>
+
+            <div className={`inline-message queue-worker-message ${workerStatus.toLowerCase()}`}>
+                <strong>Worker: {workerStatus}</strong>
+                <span>{workerMessage || "The queue worker is ready."}</span>
             </div>
 
             <div className="queue-summary">

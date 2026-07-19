@@ -51,6 +51,10 @@ export default function ProjectDetailPage() {
     const [ocrMessage, setOcrMessage] = useState("");
     const [analysisMessage, setAnalysisMessage] = useState("");
     const [queueMessage, setQueueMessage] = useState("");
+    const [queueWorkerStatus, setQueueWorkerStatus] = useState<
+        "Running" | "Idle" | "Stopping" | "Stopped"
+    >("Idle");
+    const [queueWorkerMessage, setQueueWorkerMessage] = useState("");
     const [ocrProgress, setOcrProgress] = useState<OcrProgress | null>(null);
 
     const formatSize = (bytes: number) => {
@@ -143,6 +147,40 @@ export default function ProjectDetailPage() {
     }, []);
 
     useEffect(() => {
+        if (!window.ocrStudio?.onOcrQueueUpdated) return;
+
+        window.ocrStudio.onOcrQueueUpdated((data) => {
+            if (!project?.projectPath || data.projectPath !== project.projectPath) {
+                return;
+            }
+
+            setOcrQueue(data.queue);
+            void Promise.all([
+                loadDocuments(project.projectPath),
+                loadExports(project.projectPath),
+                loadOcrJobs(project.projectPath),
+            ]);
+        });
+    }, [project?.projectPath]);
+
+    useEffect(() => {
+        if (!window.ocrStudio?.onOcrQueueWorkerStatus) return;
+
+        window.ocrStudio.onOcrQueueWorkerStatus((data) => {
+            if (!project?.projectPath || data.projectPath !== project.projectPath) {
+                return;
+            }
+
+            setQueueWorkerStatus(data.status);
+            setQueueWorkerMessage(data.message);
+
+            if (data.status === "Idle" || data.status === "Stopped") {
+                void refreshProjectData(project.projectPath);
+            }
+        });
+    }, [project?.projectPath]);
+
+    useEffect(() => {
         async function loadProject() {
             const data = await getProjectById(Number(id));
             setProject(data);
@@ -153,6 +191,13 @@ export default function ProjectDetailPage() {
 
             if (data?.projectPath && window.ocrStudio) {
                 await refreshProjectData(data.projectPath);
+
+                const queueStatus = await window.ocrStudio.getOcrQueueStatus({
+                    projectPath: data.projectPath,
+                });
+
+                setQueueWorkerStatus(queueStatus.status);
+                setOcrQueue(queueStatus.queue);
             }
         }
 
@@ -335,6 +380,41 @@ export default function ProjectDetailPage() {
             alert(message);
         } finally {
             setQueueUpdating(false);
+        }
+    };
+
+    const startQueueWorker = async () => {
+        if (!project?.projectPath) {
+            alert("Project path is missing.");
+            return;
+        }
+
+        const result = await window.ocrStudio.startOcrQueue({
+            projectPath: project.projectPath,
+        });
+
+        setOcrQueue(result.queue);
+        setQueueWorkerStatus(result.status);
+        setQueueWorkerMessage(result.message);
+
+        if (!result.success) {
+            alert(result.message);
+        }
+    };
+
+    const stopQueueWorker = async () => {
+        if (!project?.projectPath) return;
+
+        const result = await window.ocrStudio.stopOcrQueue({
+            projectPath: project.projectPath,
+        });
+
+        setOcrQueue(result.queue);
+        setQueueWorkerStatus(result.status);
+        setQueueWorkerMessage(result.message);
+
+        if (!result.success) {
+            alert(result.message);
         }
     };
 
@@ -755,6 +835,10 @@ export default function ProjectDetailPage() {
                         queueMessage={queueMessage}
                         queueUpdating={queueUpdating}
                         counts={queueCounts}
+                        workerStatus={queueWorkerStatus}
+                        workerMessage={queueWorkerMessage}
+                        onStartWorker={startQueueWorker}
+                        onStopWorker={stopQueueWorker}
                         onClearFinished={clearFinishedQueueItems}
                         onRemove={removeQueueItem}
                         onOpen={(path) =>

@@ -1,0 +1,27 @@
+
+/* Append these rules to ProjectDetailPage.css */
+.queue-worker-message {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: center;
+}
+
+.queue-worker-message span {
+    font-weight: 500;
+}
+
+.queue-worker-message.running {
+    background: #ecfdf5;
+    color: #166534;
+}
+
+.queue-worker-message.stopping {
+    background: #fff7ed;
+    color: #9a3412;
+}
+
+.queue-worker-message.stopped {
+    background: #fef2f2;
+    color: #991b1b;
+}
