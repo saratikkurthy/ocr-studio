@@ -495,6 +495,310 @@ declare global {
                 }>;
             }>;
 
+            getPublicationSettings: (data: {
+                projectPath: string;
+            }) => Promise<{
+                workerCount: number;
+                isPaused: boolean;
+            }>;
+
+            updatePublicationSettings: (data: {
+                projectPath: string;
+                workerCount?: number;
+                isPaused?: boolean;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                settings: {
+                    workerCount: number;
+                    isPaused: boolean;
+                };
+            }>;
+
+            previewIncrementalPublication: (data: {
+                projectPath: string;
+                documentId: number;
+                options: Record<string, boolean>;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                preview: {
+                    hasPreviousSnapshot: boolean;
+                    changedPageNumbers: number[];
+                    unchangedPageNumbers: number[];
+                    previousPublishedAt: string | null;
+                    totalPages: number;
+                } | null;
+            }>;
+
+            listPublicationProfiles: (data: {
+                projectPath: string;
+            }) => Promise<Array<{
+                id: string;
+                name: string;
+                options: Record<string, boolean>;
+                createdAt: string;
+                updatedAt: string;
+            }>>;
+
+            savePublicationProfile: (data: {
+                projectPath: string;
+                name: string;
+                options: Record<string, boolean>;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                profiles: Array<{
+                    id: string;
+                    name: string;
+                    options: Record<string, boolean>;
+                    createdAt: string;
+                    updatedAt: string;
+                }>;
+            }>;
+
+            deletePublicationProfile: (data: {
+                projectPath: string;
+                profileId: string;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                profiles: Array<{
+                    id: string;
+                    name: string;
+                    options: Record<string, boolean>;
+                    createdAt: string;
+                    updatedAt: string;
+                }>;
+            }>;
+
+            listPublicationQueue: (data: {
+                projectPath: string;
+            }) => Promise<Array<{
+                id: string;
+                documentId: number;
+                documentName: string;
+                profileId: string | null;
+                profileName: string | null;
+                options: Record<string, boolean>;
+                status: "Queued" | "Running" | "Completed" | "Failed" | "Cancelled";
+                progress: number;
+                message: string;
+                createdAt: string;
+                startedAt: string | null;
+                completedAt: string | null;
+                durationMs: number | null;
+                folderPath: string | null;
+                files: Array<{
+                    type: string;
+                    fileName: string;
+                    filePath: string;
+                }>;
+                error: string | null;
+                attempts: number;
+            }>>;
+
+            enqueuePublicationJobs: (data: {
+                projectPath: string;
+                documents: Array<{
+                    documentId: number;
+                    documentName: string;
+                    basePdf?: string | null;
+                }>;
+                profileId?: string | null;
+                profileName?: string | null;
+                options: Record<string, boolean>;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                jobs: Array<Record<string, unknown>>;
+            }>;
+
+            retryPublicationJob: (data: {
+                projectPath: string;
+                jobId: string;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                jobs: Array<Record<string, unknown>>;
+            }>;
+
+            cancelPublicationJob: (data: {
+                projectPath: string;
+                jobId: string;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                jobs: Array<Record<string, unknown>>;
+            }>;
+
+            removePublicationJob: (data: {
+                projectPath: string;
+                jobId: string;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                jobs: Array<Record<string, unknown>>;
+            }>;
+
+            resumePublicationQueue: (data: {
+                projectPath: string;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+            }>;
+
+            validatePublishedDocument: (data: {
+                projectPath: string;
+                documentId: number;
+                options: {
+                    includeCorrected: boolean;
+                    includeVerified: boolean;
+                    includeUnreviewed: boolean;
+                    includeIgnored: boolean;
+                };
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                validation: {
+                    valid: boolean;
+                    missingPages: number[];
+                    emptyPages: number[];
+                    malformedWords: number;
+                    invalidBoxes: number;
+                    duplicateWordIds: number;
+                } | null;
+                summary: {
+                    pages: number;
+                    words: number;
+                    corrected: number;
+                    verified: number;
+                    ignored: number;
+                    unreviewed: number;
+                    publishedWords: number;
+                } | null;
+            }>;
+
+            createPublishedBundle: (data: {
+                projectPath: string;
+                documentId: number;
+                documentName: string;
+                options: {
+                    includeCorrected: boolean;
+                    includeVerified: boolean;
+                    includeUnreviewed: boolean;
+                    includeIgnored: boolean;
+                    exportTxt: boolean;
+                    exportJson: boolean;
+                    exportCsv: boolean;
+                    exportHtml: boolean;
+                };
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                files: Array<{
+                    type: string;
+                    fileName: string;
+                    filePath: string;
+                }>;
+                record: {
+                    id: string;
+                    documentId: number;
+                    documentName: string;
+                    version: number;
+                    publishedAt: string;
+                    durationMs: number;
+                    folderPath: string;
+                    summary: {
+                        pages: number;
+                        words: number;
+                        corrected: number;
+                        verified: number;
+                        ignored: number;
+                        unreviewed: number;
+                        publishedWords: number;
+                    };
+                    validation: {
+                        valid: boolean;
+                        missingPages: number[];
+                        emptyPages: number[];
+                        malformedWords: number;
+                        invalidBoxes: number;
+                        duplicateWordIds: number;
+                    };
+                    files: Array<{
+                        type: string;
+                        fileName: string;
+                        filePath: string;
+                    }>;
+                } | null;
+            }>;
+
+            createCorrectedSearchablePdf: (data: {
+                projectPath: string;
+                documentId: number;
+                documentName: string;
+                basePdf: string;
+                options: {
+                    includeCorrected: boolean;
+                    includeVerified: boolean;
+                    includeUnreviewed: boolean;
+                    includeIgnored: boolean;
+                };
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                outputPdf: string | null;
+                record: {
+                    id: string;
+                    version: number;
+                    folderPath: string;
+                    searchablePdf: {
+                        fileName: string;
+                        filePath: string;
+                        size: number;
+                        extractedCharacters: number;
+                        fontPath: string | null;
+                        missingIndexPages: number[];
+                    };
+                } | null;
+            }>;
+
+            listPublishHistory: (data: {
+                projectPath: string;
+                documentId: number;
+            }) => Promise<Array<{
+                id: string;
+                documentId: number;
+                documentName: string;
+                version: number;
+                publishedAt: string;
+                durationMs: number;
+                folderPath: string;
+                summary: {
+                    pages: number;
+                    words: number;
+                    corrected: number;
+                    verified: number;
+                    ignored: number;
+                    unreviewed: number;
+                    publishedWords: number;
+                };
+                validation: {
+                    valid: boolean;
+                    missingPages: number[];
+                    emptyPages: number[];
+                    malformedWords: number;
+                    invalidBoxes: number;
+                    duplicateWordIds: number;
+                };
+                files: Array<{
+                    type: string;
+                    fileName: string;
+                    filePath: string;
+                }>;
+            }>>;
+
             listBatchCorrectionTransactions: (data: {
                 projectPath: string;
                 documentId: number;

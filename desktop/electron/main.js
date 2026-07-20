@@ -3540,6 +3540,2190 @@ function saveCorrectionRules(projectPath, rules) {
   );
 }
 
+
+function getPublishHistoryPath(projectPath) {
+  return path.join(
+    getWordIndexRoot(projectPath),
+    "publish-history.json"
+  );
+}
+
+function readPublishHistory(projectPath) {
+  const filePath = getPublishHistoryPath(projectPath);
+
+  if (!projectPath || !fs.existsSync(filePath)) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(
+      fs.readFileSync(filePath, "utf-8")
+    );
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePublishHistory(projectPath, history) {
+  fs.mkdirSync(getWordIndexRoot(projectPath), {
+    recursive: true,
+  });
+
+  fs.writeFileSync(
+    getPublishHistoryPath(projectPath),
+    JSON.stringify(history.slice(-200), null, 2),
+    "utf-8"
+  );
+}
+
+function csvEscape(value) {
+  const text = String(value ?? "");
+
+  if (/[",\r\n]/.test(text)) {
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+
+  return text;
+}
+
+function collectPublishedWordData(
+  projectPath,
+  documentId,
+  options = {}
+) {
+  const includeCorrected =
+    options.includeCorrected !== false;
+  const includeVerified =
+    options.includeVerified !== false;
+  const includeUnreviewed =
+    options.includeUnreviewed !== false;
+  const includeIgnored =
+    options.includeIgnored === true;
+
+  const folder = getWordIndexDocumentFolder(
+    projectPath,
+    documentId
+  );
+
+  const result = {
+    pages: [],
+    validation: {
+      valid: true,
+      missingPages: [],
+      emptyPages: [],
+      malformedWords: 0,
+      invalidBoxes: 0,
+      duplicateWordIds: 0,
+    },
+    summary: {
+      pages: 0,
+      words: 0,
+      corrected: 0,
+      verified: 0,
+      ignored: 0,
+      unreviewed: 0,
+      publishedWords: 0,
+    },
+  };
+
+  if (!fs.existsSync(folder)) {
+    result.validation.valid = false;
+    result.validation.missingPages.push(1);
+    return result;
+  }
+
+  const pageFiles = fs
+    .readdirSync(folder)
+    .filter((name) => /^page-\d{6}\.json$/i.test(name))
+    .sort();
+
+  const pageNumbers = pageFiles
+    .map((name) =>
+      Number(name.match(/page-(\d{6})\.json/i)?.[1])
+    )
+    .filter(Number.isFinite);
+
+  if (pageNumbers.length > 0) {
+    const maxPage = Math.max(...pageNumbers);
+
+    for (let pageNumber = 1; pageNumber <= maxPage; pageNumber += 1) {
+      if (!pageNumbers.includes(pageNumber)) {
+        result.validation.missingPages.push(pageNumber);
+      }
+    }
+  }
+
+  for (const fileName of pageFiles) {
+    let page;
+
+    try {
+      page = JSON.parse(
+        fs.readFileSync(
+          path.join(folder, fileName),
+          "utf-8"
+        )
+      );
+    } catch {
+      result.validation.valid = false;
+      continue;
+    }
+
+    const sourceWords = Array.isArray(page?.words)
+      ? page.words
+      : [];
+    const seenIds = new Set();
+    const publishedWords = [];
+
+    for (const word of sourceWords) {
+      const status = String(
+        word.status || "Unreviewed"
+      );
+
+      result.summary.words += 1;
+
+      if (status === "Corrected") {
+        result.summary.corrected += 1;
+      } else if (status === "Verified") {
+        result.summary.verified += 1;
+      } else if (status === "Ignored") {
+        result.summary.ignored += 1;
+      } else {
+        result.summary.unreviewed += 1;
+      }
+
+      if (!word.id || !String(word.text || "").trim()) {
+        result.validation.malformedWords += 1;
+      }
+
+      if (seenIds.has(String(word.id))) {
+        result.validation.duplicateWordIds += 1;
+      }
+      seenIds.add(String(word.id));
+
+      const box = word.box || {};
+      if (
+        !Number.isFinite(Number(box.left)) ||
+        !Number.isFinite(Number(box.top)) ||
+        !Number.isFinite(Number(box.width)) ||
+        !Number.isFinite(Number(box.height)) ||
+        Number(box.width) < 0 ||
+        Number(box.height) < 0
+      ) {
+        result.validation.invalidBoxes += 1;
+      }
+
+      if (
+        (status === "Corrected" && !includeCorrected) ||
+        (status === "Verified" && !includeVerified) ||
+        (status === "Ignored" && !includeIgnored) ||
+        (status === "Unreviewed" && !includeUnreviewed)
+      ) {
+        continue;
+      }
+
+      const publishedText =
+        status === "Corrected" && word.correctedText
+          ? word.correctedText
+          : word.text;
+
+      publishedWords.push({
+        ...word,
+        publishedText,
+      });
+      result.summary.publishedWords += 1;
+    }
+
+    if (publishedWords.length === 0) {
+      result.validation.emptyPages.push(
+        Number(page.pageNumber)
+      );
+    }
+
+    publishedWords.sort(
+      (a, b) =>
+        Number(a.blockNumber || 0) -
+          Number(b.blockNumber || 0) ||
+        Number(a.paragraphNumber || 0) -
+          Number(b.paragraphNumber || 0) ||
+        Number(a.lineNumber || 0) -
+          Number(b.lineNumber || 0) ||
+        Number(a.wordNumber || 0) -
+          Number(b.wordNumber || 0)
+    );
+
+    const lines = [];
+    let currentKey = null;
+    let currentWords = [];
+
+    for (const word of publishedWords) {
+      const key = [
+        word.blockNumber || 0,
+        word.paragraphNumber || 0,
+        word.lineNumber || 0,
+      ].join(":");
+
+      if (currentKey !== null && key !== currentKey) {
+        lines.push(currentWords.join(" "));
+        currentWords = [];
+      }
+
+      currentKey = key;
+      currentWords.push(word.publishedText);
+    }
+
+    if (currentWords.length > 0) {
+      lines.push(currentWords.join(" "));
+    }
+
+    result.pages.push({
+      documentId,
+      pageNumber: Number(page.pageNumber),
+      sourceFile: page.sourceFile || "",
+      language: page.language || "",
+      imageWidth: Number(page.imageWidth || 0),
+      imageHeight: Number(page.imageHeight || 0),
+      lines,
+      text: lines.join("\n"),
+      words: publishedWords,
+    });
+  }
+
+  result.summary.pages = result.pages.length;
+  result.validation.valid =
+    result.validation.missingPages.length === 0 &&
+    result.validation.malformedWords === 0 &&
+    result.validation.invalidBoxes === 0 &&
+    result.validation.duplicateWordIds === 0;
+
+  return result;
+}
+
+
+function getPublicationProfilesPath(projectPath) {
+  return path.join(
+    getWordIndexRoot(projectPath),
+    "publication-profiles.json"
+  );
+}
+
+function readPublicationProfiles(projectPath) {
+  const filePath = getPublicationProfilesPath(projectPath);
+
+  if (!projectPath || !fs.existsSync(filePath)) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(
+      fs.readFileSync(filePath, "utf-8")
+    );
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePublicationProfiles(projectPath, profiles) {
+  fs.mkdirSync(getWordIndexRoot(projectPath), {
+    recursive: true,
+  });
+
+  fs.writeFileSync(
+    getPublicationProfilesPath(projectPath),
+    JSON.stringify(profiles, null, 2),
+    "utf-8"
+  );
+}
+
+function getPublicationQueuePath(projectPath) {
+  return path.join(
+    getWordIndexRoot(projectPath),
+    "publication-queue.json"
+  );
+}
+
+function readPublicationQueue(projectPath) {
+  const filePath = getPublicationQueuePath(projectPath);
+
+  if (!projectPath || !fs.existsSync(filePath)) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(
+      fs.readFileSync(filePath, "utf-8")
+    );
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePublicationQueue(projectPath, jobs) {
+  fs.mkdirSync(getWordIndexRoot(projectPath), {
+    recursive: true,
+  });
+
+  fs.writeFileSync(
+    getPublicationQueuePath(projectPath),
+    JSON.stringify(jobs.slice(-500), null, 2),
+    "utf-8"
+  );
+}
+
+function xmlEscape(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function writeAdditionalPublicationFormats({
+  publishFolder,
+  safeBase,
+  collected,
+  options,
+}) {
+  const files = [];
+
+  if (options.exportTsv) {
+    const filePath = path.join(
+      publishFolder,
+      `${safeBase}-corrected.tsv`
+    );
+    const rows = [
+      [
+        "page",
+        "word_id",
+        "original_text",
+        "published_text",
+        "status",
+        "confidence",
+        "left",
+        "top",
+        "width",
+        "height",
+      ].join("\t"),
+    ];
+
+    for (const page of collected.pages) {
+      for (const word of page.words) {
+        rows.push(
+          [
+            page.pageNumber,
+            String(word.id || "").replace(/\t/g, " "),
+            String(word.text || "").replace(/\t/g, " "),
+            String(word.publishedText || "").replace(/\t/g, " "),
+            String(word.status || ""),
+            Number(word.confidence || 0),
+            Number(word.box?.left || 0),
+            Number(word.box?.top || 0),
+            Number(word.box?.width || 0),
+            Number(word.box?.height || 0),
+          ].join("\t")
+        );
+      }
+    }
+
+    fs.writeFileSync(filePath, rows.join("\n"), "utf-8");
+    files.push({
+      type: "TSV",
+      fileName: path.basename(filePath),
+      filePath,
+    });
+  }
+
+  if (options.exportMarkdown) {
+    const filePath = path.join(
+      publishFolder,
+      `${safeBase}-corrected.md`
+    );
+    const markdown = collected.pages
+      .map(
+        (page) =>
+          `## Page ${page.pageNumber}\n\n${page.lines.join(
+            "\n\n"
+          )}`
+      )
+      .join("\n\n---\n\n");
+
+    fs.writeFileSync(filePath, markdown, "utf-8");
+    files.push({
+      type: "MARKDOWN",
+      fileName: path.basename(filePath),
+      filePath,
+    });
+  }
+
+  if (options.exportHocr) {
+    const filePath = path.join(
+      publishFolder,
+      `${safeBase}-corrected.hocr.html`
+    );
+
+    const pages = collected.pages
+      .map((page) => {
+        const words = page.words
+          .map((word) => {
+            const box = word.box || {};
+            const x1 = Number(box.left || 0);
+            const y1 = Number(box.top || 0);
+            const x2 = x1 + Number(box.width || 0);
+            const y2 = y1 + Number(box.height || 0);
+
+            return `<span class="ocrx_word" id="${xmlEscape(
+              word.id
+            )}" title="bbox ${x1} ${y1} ${x2} ${y2}; x_wconf ${Number(
+              word.confidence || 0
+            )}">${xmlEscape(word.publishedText)}</span>`;
+          })
+          .join(" ");
+
+        return `<div class="ocr_page" id="page_${page.pageNumber}" title="bbox 0 0 ${page.imageWidth} ${page.imageHeight}">${words}</div>`;
+      })
+      .join("\n");
+
+    const hocr = `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="ocr-system" content="OCR Studio">
+<meta name="ocr-capabilities" content="ocr_page ocrx_word">
+<title>${xmlEscape(safeBase)}</title>
+</head>
+<body>
+${pages}
+</body>
+</html>`;
+
+    fs.writeFileSync(filePath, hocr, "utf-8");
+    files.push({
+      type: "HOCR",
+      fileName: path.basename(filePath),
+      filePath,
+    });
+  }
+
+  if (options.exportAlto) {
+    const filePath = path.join(
+      publishFolder,
+      `${safeBase}-corrected.alto.xml`
+    );
+
+    const pages = collected.pages
+      .map((page) => {
+        const strings = page.words
+          .map((word) => {
+            const box = word.box || {};
+            return `<String ID="${xmlEscape(
+              word.id
+            )}" CONTENT="${xmlEscape(
+              word.publishedText
+            )}" WC="${Math.max(
+              0,
+              Math.min(1, Number(word.confidence || 0) / 100)
+            ).toFixed(4)}" HPOS="${Number(
+              box.left || 0
+            )}" VPOS="${Number(
+              box.top || 0
+            )}" WIDTH="${Number(
+              box.width || 0
+            )}" HEIGHT="${Number(box.height || 0)}"/>`;
+          })
+          .join("\n");
+
+        return `<Page ID="page_${page.pageNumber}" PHYSICAL_IMG_NR="${page.pageNumber}" WIDTH="${page.imageWidth}" HEIGHT="${page.imageHeight}">
+<PrintSpace HPOS="0" VPOS="0" WIDTH="${page.imageWidth}" HEIGHT="${page.imageHeight}">
+<TextBlock ID="block_${page.pageNumber}">
+<TextLine ID="line_${page.pageNumber}">
+${strings}
+</TextLine>
+</TextBlock>
+</PrintSpace>
+</Page>`;
+      })
+      .join("\n");
+
+    const alto = `<?xml version="1.0" encoding="UTF-8"?>
+<alto xmlns="http://www.loc.gov/standards/alto/ns-v4#">
+<Description>
+<MeasurementUnit>pixel</MeasurementUnit>
+<sourceImageInformation><fileName>${xmlEscape(
+      safeBase
+    )}</fileName></sourceImageInformation>
+</Description>
+<Layout>
+${pages}
+</Layout>
+</alto>`;
+
+    fs.writeFileSync(filePath, alto, "utf-8");
+    files.push({
+      type: "ALTO_XML",
+      fileName: path.basename(filePath),
+      filePath,
+    });
+  }
+
+  if (options.exportPageXml) {
+    const filePath = path.join(
+      publishFolder,
+      `${safeBase}-corrected.page.xml`
+    );
+
+    const pages = collected.pages
+      .map((page) => {
+        const words = page.words
+          .map((word) => {
+            const box = word.box || {};
+            const x = Number(box.left || 0);
+            const y = Number(box.top || 0);
+            const width = Number(box.width || 0);
+            const height = Number(box.height || 0);
+            const points = `${x},${y} ${x + width},${y} ${x + width},${
+              y + height
+            } ${x},${y + height}`;
+
+            return `<Word id="${xmlEscape(word.id)}">
+<Coords points="${points}"/>
+<TextEquiv conf="${Math.max(
+              0,
+              Math.min(1, Number(word.confidence || 0) / 100)
+            ).toFixed(4)}"><Unicode>${xmlEscape(
+              word.publishedText
+            )}</Unicode></TextEquiv>
+</Word>`;
+          })
+          .join("\n");
+
+        return `<Page imageFilename="${xmlEscape(
+          page.sourceFile
+        )}" imageWidth="${page.imageWidth}" imageHeight="${
+          page.imageHeight
+        }">
+<TextRegion id="region_${page.pageNumber}">
+<TextLine id="line_${page.pageNumber}">
+${words}
+</TextLine>
+</TextRegion>
+</Page>`;
+      })
+      .join("\n");
+
+    const pageXml = `<?xml version="1.0" encoding="UTF-8"?>
+<PcGts xmlns="http://schema.primaresearch.org/PAGE/gts/pagecontent/2019-07-15">
+<Metadata>
+<Creator>OCR Studio</Creator>
+<Created>${new Date().toISOString()}</Created>
+<LastChange>${new Date().toISOString()}</LastChange>
+</Metadata>
+${pages}
+</PcGts>`;
+
+    fs.writeFileSync(filePath, pageXml, "utf-8");
+    files.push({
+      type: "PAGE_XML",
+      fileName: path.basename(filePath),
+      filePath,
+    });
+  }
+
+  return files;
+}
+
+async function executePublicationQueueJob(
+  projectPath,
+  job
+) {
+  const collected = collectPublishedWordData(
+    projectPath,
+    Number(job.documentId),
+    job.options || {}
+  );
+
+  if (collected.pages.length === 0) {
+    throw new Error(
+      "No indexed pages are available for publication."
+    );
+  }
+
+  const fullCollected = collected;
+  const incremental = getIncrementalPageSelection(
+    projectPath,
+    Number(job.documentId),
+    fullCollected
+  );
+
+  if (job.options?.incrementalPublishing) {
+    collected = {
+      ...fullCollected,
+      pages: fullCollected.pages.filter((page) =>
+        incremental.changedPageNumbers.includes(
+          page.pageNumber
+        )
+      ),
+      summary: {
+        ...fullCollected.summary,
+        pages: incremental.changedPageNumbers.length,
+        publishedWords: fullCollected.pages
+          .filter((page) =>
+            incremental.changedPageNumbers.includes(
+              page.pageNumber
+            )
+          )
+          .reduce(
+            (total, page) =>
+              total + page.words.length,
+            0
+          ),
+      },
+    };
+  }
+
+  const exportRoot = path.join(
+    projectPath,
+    "Export",
+    "Published"
+  );
+  fs.mkdirSync(exportRoot, { recursive: true });
+
+  const safeBase =
+    path
+      .basename(
+        job.documentName ||
+          `document-${job.documentId}`,
+        path.extname(
+          job.documentName ||
+            `document-${job.documentId}`
+        )
+      )
+      .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "_")
+      .trim() || `document-${job.documentId}`;
+  const history = readPublishHistory(projectPath);
+  const version =
+    history.filter(
+      (record) =>
+        Number(record.documentId) ===
+        Number(job.documentId)
+    ).length + 1;
+  const timestamp = new Date()
+    .toISOString()
+    .replace(/[:.]/g, "-");
+  const publishFolder = path.join(
+    exportRoot,
+    `${safeBase}-v${version}-${timestamp}`
+  );
+  fs.mkdirSync(publishFolder, { recursive: true });
+
+  const files = [];
+  const fullText = collected.pages
+    .map(
+      (page) =>
+        `--- Page ${page.pageNumber} ---\n${page.text}`
+    )
+    .join("\n\n");
+
+  if (job.options?.exportTxt) {
+    const filePath = path.join(
+      publishFolder,
+      `${safeBase}-corrected.txt`
+    );
+    fs.writeFileSync(filePath, fullText, "utf-8");
+    files.push({
+      type: "TXT",
+      fileName: path.basename(filePath),
+      filePath,
+    });
+  }
+
+  if (job.options?.exportJson) {
+    const filePath = path.join(
+      publishFolder,
+      `${safeBase}-corrected.json`
+    );
+    fs.writeFileSync(
+      filePath,
+      JSON.stringify(
+        {
+          version: 1,
+          documentId: Number(job.documentId),
+          documentName: job.documentName,
+          publishedAt: new Date().toISOString(),
+          options: job.options,
+          summary: collected.summary,
+          validation: collected.validation,
+          pages: collected.pages,
+        },
+        null,
+        2
+      ),
+      "utf-8"
+    );
+    files.push({
+      type: "JSON",
+      fileName: path.basename(filePath),
+      filePath,
+    });
+  }
+
+  if (job.options?.exportCsv) {
+    const filePath = path.join(
+      publishFolder,
+      `${safeBase}-corrected.csv`
+    );
+    const rows = [
+      [
+        "page",
+        "word_id",
+        "original_text",
+        "published_text",
+        "status",
+        "confidence",
+        "left",
+        "top",
+        "width",
+        "height",
+      ].join(","),
+    ];
+
+    for (const page of collected.pages) {
+      for (const word of page.words) {
+        rows.push(
+          [
+            page.pageNumber,
+            csvEscape(word.id),
+            csvEscape(word.text),
+            csvEscape(word.publishedText),
+            csvEscape(word.status),
+            Number(word.confidence || 0),
+            Number(word.box?.left || 0),
+            Number(word.box?.top || 0),
+            Number(word.box?.width || 0),
+            Number(word.box?.height || 0),
+          ].join(",")
+        );
+      }
+    }
+
+    fs.writeFileSync(filePath, rows.join("\n"), "utf-8");
+    files.push({
+      type: "CSV",
+      fileName: path.basename(filePath),
+      filePath,
+    });
+  }
+
+  if (job.options?.exportHtml) {
+    const filePath = path.join(
+      publishFolder,
+      `${safeBase}-corrected.html`
+    );
+    const pagesHtml = collected.pages
+      .map(
+        (page) => `<section data-page="${page.pageNumber}">
+<h2>Page ${page.pageNumber}</h2>
+${page.lines
+  .map((line) => `<p>${xmlEscape(line)}</p>`)
+  .join("\n")}
+</section>`
+      )
+      .join("\n");
+
+    fs.writeFileSync(
+      filePath,
+      `<!doctype html><html><head><meta charset="utf-8"><title>${xmlEscape(
+        safeBase
+      )}</title></head><body>${pagesHtml}</body></html>`,
+      "utf-8"
+    );
+    files.push({
+      type: "HTML",
+      fileName: path.basename(filePath),
+      filePath,
+    });
+  }
+
+  files.push(
+    ...writeAdditionalPublicationFormats({
+      publishFolder,
+      safeBase,
+      collected,
+      options: job.options || {},
+    })
+  );
+
+  files.push(
+    ...writeAdditionalPublicationFormats({
+      publishFolder,
+      safeBase,
+      collected,
+      options,
+    })
+  );
+
+  const incrementalManifestPath = path.join(
+    publishFolder,
+    `${safeBase}-incremental-manifest.json`
+  );
+  fs.writeFileSync(
+    incrementalManifestPath,
+    JSON.stringify(
+      {
+        enabled: Boolean(
+          job.options?.incrementalPublishing
+        ),
+        hasPreviousSnapshot:
+          incremental.hasPreviousSnapshot,
+        previousPublishedAt:
+          incremental.previousPublishedAt,
+        changedPageNumbers:
+          incremental.changedPageNumbers,
+        unchangedPageNumbers:
+          incremental.unchangedPageNumbers,
+        exportedPageNumbers: collected.pages.map(
+          (page) => page.pageNumber
+        ),
+      },
+      null,
+      2
+    ),
+    "utf-8"
+  );
+  files.push({
+    type: "INCREMENTAL_MANIFEST",
+    fileName: path.basename(
+      incrementalManifestPath
+    ),
+    filePath: incrementalManifestPath,
+  });
+
+  const reportPath = path.join(
+    publishFolder,
+    `${safeBase}-review-report.json`
+  );
+  fs.writeFileSync(
+    reportPath,
+    JSON.stringify(
+      {
+        queueJobId: job.id,
+        documentId: Number(job.documentId),
+        documentName: job.documentName,
+        version,
+        publishedAt: new Date().toISOString(),
+        summary: collected.summary,
+        validation: collected.validation,
+        options: job.options,
+        files,
+      },
+      null,
+      2
+    ),
+    "utf-8"
+  );
+  files.push({
+    type: "REPORT",
+    fileName: path.basename(reportPath),
+    filePath: reportPath,
+  });
+
+  const record = {
+    id: `publish-queue-${Date.now()}-${Math.random()
+      .toString(16)
+      .slice(2)}`,
+    documentId: Number(job.documentId),
+    documentName: job.documentName,
+    version,
+    publishedAt: new Date().toISOString(),
+    durationMs: 0,
+    folderPath: publishFolder,
+    summary: collected.summary,
+    validation: collected.validation,
+    options: job.options,
+    profileId: job.profileId || null,
+    queueJobId: job.id,
+    incremental: {
+      enabled: Boolean(
+        job.options?.incrementalPublishing
+      ),
+      hasPreviousSnapshot:
+        incremental.hasPreviousSnapshot,
+      changedPageNumbers:
+        incremental.changedPageNumbers,
+      unchangedPageNumbers:
+        incremental.unchangedPageNumbers,
+    },
+    files,
+  };
+
+  history.push(record);
+  savePublishHistory(projectPath, history);
+  savePublicationSnapshot(
+    projectPath,
+    Number(job.documentId),
+    fullCollected,
+    record
+  );
+
+  return record;
+}
+
+
+function getPublicationSettingsPath(projectPath) {
+  return path.join(
+    getWordIndexRoot(projectPath),
+    "publication-settings.json"
+  );
+}
+
+function readPublicationSettings(projectPath) {
+  const defaults = {
+    workerCount: 2,
+    isPaused: false,
+  };
+  const filePath = getPublicationSettingsPath(projectPath);
+
+  if (!projectPath || !fs.existsSync(filePath)) {
+    return defaults;
+  }
+
+  try {
+    const parsed = JSON.parse(
+      fs.readFileSync(filePath, "utf-8")
+    );
+    return {
+      workerCount: Math.max(
+        1,
+        Math.min(4, Number(parsed.workerCount || 2))
+      ),
+      isPaused: Boolean(parsed.isPaused),
+    };
+  } catch {
+    return defaults;
+  }
+}
+
+function savePublicationSettings(projectPath, settings) {
+  fs.mkdirSync(getWordIndexRoot(projectPath), {
+    recursive: true,
+  });
+  const normalized = {
+    workerCount: Math.max(
+      1,
+      Math.min(4, Number(settings.workerCount || 2))
+    ),
+    isPaused: Boolean(settings.isPaused),
+  };
+  fs.writeFileSync(
+    getPublicationSettingsPath(projectPath),
+    JSON.stringify(normalized, null, 2),
+    "utf-8"
+  );
+  return normalized;
+}
+
+function getPublicationSnapshotPath(projectPath, documentId) {
+  return path.join(
+    getWordIndexRoot(projectPath),
+    `publication-snapshot-${String(documentId)}.json`
+  );
+}
+
+function hashPublishedPage(page) {
+  return crypto
+    .createHash("sha256")
+    .update(
+      JSON.stringify({
+        pageNumber: page.pageNumber,
+        words: page.words.map((word) => ({
+          id: word.id,
+          text: word.publishedText,
+          status: word.status,
+          confidence: word.confidence,
+          box: word.box,
+        })),
+      })
+    )
+    .digest("hex");
+}
+
+function readPublicationSnapshot(projectPath, documentId) {
+  const filePath = getPublicationSnapshotPath(
+    projectPath,
+    documentId
+  );
+
+  if (!fs.existsSync(filePath)) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(
+      fs.readFileSync(filePath, "utf-8")
+    );
+  } catch {
+    return null;
+  }
+}
+
+function savePublicationSnapshot(
+  projectPath,
+  documentId,
+  collected,
+  record
+) {
+  const pageHashes = {};
+
+  for (const page of collected.pages) {
+    pageHashes[String(page.pageNumber)] =
+      hashPublishedPage(page);
+  }
+
+  const snapshot = {
+    version: 1,
+    documentId: Number(documentId),
+    publishedAt: new Date().toISOString(),
+    publicationRecordId: record?.id || null,
+    pageHashes,
+  };
+
+  fs.writeFileSync(
+    getPublicationSnapshotPath(projectPath, documentId),
+    JSON.stringify(snapshot, null, 2),
+    "utf-8"
+  );
+
+  return snapshot;
+}
+
+function getIncrementalPageSelection(
+  projectPath,
+  documentId,
+  collected
+) {
+  const previous = readPublicationSnapshot(
+    projectPath,
+    documentId
+  );
+  const changedPageNumbers = [];
+  const unchangedPageNumbers = [];
+
+  for (const page of collected.pages) {
+    const currentHash = hashPublishedPage(page);
+    const previousHash =
+      previous?.pageHashes?.[String(page.pageNumber)];
+
+    if (!previousHash || previousHash !== currentHash) {
+      changedPageNumbers.push(page.pageNumber);
+    } else {
+      unchangedPageNumbers.push(page.pageNumber);
+    }
+  }
+
+  return {
+    hasPreviousSnapshot: Boolean(previous),
+    changedPageNumbers,
+    unchangedPageNumbers,
+    previousPublishedAt: previous?.publishedAt || null,
+  };
+}
+
+const activePublicationQueueProjects = new Set();
+const activePublicationJobs = new Map();
+const publicationQueueCancelRequests = new Set();
+
+function updatePublicationQueueJob(
+  projectPath,
+  jobId,
+  updater
+) {
+  const jobs = readPublicationQueue(projectPath);
+  const job = jobs.find((item) => item.id === jobId);
+
+  if (!job) return null;
+
+  updater(job);
+  savePublicationQueue(projectPath, jobs);
+  return job;
+}
+
+async function runPublicationQueueJob(
+  projectPath,
+  jobId
+) {
+  updatePublicationQueueJob(
+    projectPath,
+    jobId,
+    (job) => {
+      job.status = "Running";
+      job.startedAt = new Date().toISOString();
+      job.progress = 10;
+      job.message = "Preparing publication data...";
+      job.error = null;
+    }
+  );
+
+  const startedAt = Date.now();
+
+  try {
+    if (publicationQueueCancelRequests.has(jobId)) {
+      throw new Error("Publication job cancelled.");
+    }
+
+    updatePublicationQueueJob(
+      projectPath,
+      jobId,
+      (job) => {
+        job.progress = 45;
+        job.message =
+          job.options?.incrementalPublishing
+            ? "Detecting changed pages and generating formats..."
+            : "Generating selected formats...";
+      }
+    );
+
+    const currentJobs = readPublicationQueue(
+      projectPath
+    );
+    const currentJob = currentJobs.find(
+      (item) => item.id === jobId
+    );
+
+    if (!currentJob) {
+      throw new Error("Publication job disappeared.");
+    }
+
+    const record = await executePublicationQueueJob(
+      projectPath,
+      currentJob
+    );
+
+    if (publicationQueueCancelRequests.has(jobId)) {
+      throw new Error("Publication job cancelled.");
+    }
+
+    updatePublicationQueueJob(
+      projectPath,
+      jobId,
+      (job) => {
+        job.status = "Completed";
+        job.progress = 100;
+        job.message = record.incremental?.enabled
+          ? `Generated ${record.files.length} file(s); ${record.incremental.changedPageNumbers.length} changed page(s).`
+          : `Generated ${record.files.length} file(s).`;
+        job.completedAt = new Date().toISOString();
+        job.durationMs = Date.now() - startedAt;
+        job.folderPath = record.folderPath;
+        job.files = record.files;
+        job.error = null;
+        job.incremental = record.incremental || null;
+      }
+    );
+  } catch (error) {
+    const cancelled =
+      publicationQueueCancelRequests.has(jobId) ||
+      String(error?.message || "").includes(
+        "cancelled"
+      );
+
+    updatePublicationQueueJob(
+      projectPath,
+      jobId,
+      (job) => {
+        job.status = cancelled
+          ? "Cancelled"
+          : "Failed";
+        job.progress = 0;
+        job.message = cancelled
+          ? "Publication job cancelled."
+          : "Publication job failed.";
+        job.error =
+          error instanceof Error
+            ? error.message
+            : String(error);
+        job.completedAt = new Date().toISOString();
+        job.durationMs = Date.now() - startedAt;
+      }
+    );
+  } finally {
+    publicationQueueCancelRequests.delete(jobId);
+    activePublicationJobs.delete(jobId);
+  }
+}
+
+async function processPublicationQueue(projectPath) {
+  if (
+    !projectPath ||
+    activePublicationQueueProjects.has(projectPath)
+  ) {
+    return;
+  }
+
+  activePublicationQueueProjects.add(projectPath);
+
+  try {
+    while (true) {
+      const settings =
+        readPublicationSettings(projectPath);
+
+      if (settings.isPaused) break;
+
+      const jobs = readPublicationQueue(projectPath);
+      const runningForProject = jobs.filter(
+        (job) =>
+          job.status === "Running" &&
+          activePublicationJobs.has(job.id)
+      ).length;
+      const availableSlots = Math.max(
+        0,
+        settings.workerCount - runningForProject
+      );
+
+      if (availableSlots === 0) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, 250)
+        );
+        continue;
+      }
+
+      const queued = jobs
+        .filter((job) => job.status === "Queued")
+        .slice(0, availableSlots);
+
+      if (queued.length === 0) {
+        if (runningForProject === 0) break;
+
+        await new Promise((resolve) =>
+          setTimeout(resolve, 250)
+        );
+        continue;
+      }
+
+      for (const job of queued) {
+        if (activePublicationJobs.has(job.id)) {
+          continue;
+        }
+
+        const promise = runPublicationQueueJob(
+          projectPath,
+          job.id
+        );
+        activePublicationJobs.set(job.id, promise);
+        void promise.finally(() => {
+          if (
+            !readPublicationSettings(projectPath)
+              .isPaused
+          ) {
+            setTimeout(
+              () =>
+                void processPublicationQueue(
+                  projectPath
+                ),
+              0
+            );
+          }
+        });
+      }
+
+      await new Promise((resolve) =>
+        setTimeout(resolve, 150)
+      );
+    }
+  } finally {
+    activePublicationQueueProjects.delete(projectPath);
+  }
+}
+
+ipcMain.handle("publish:listProfiles", async (_, data) => {
+  const projectPath = data?.projectPath;
+
+  if (!projectPath) return [];
+
+  return readPublicationProfiles(projectPath).sort(
+    (a, b) =>
+      String(a.name || "").localeCompare(
+        String(b.name || "")
+      )
+  );
+});
+
+ipcMain.handle("publish:saveProfile", async (_, data) => {
+  const projectPath = data?.projectPath;
+  const name = String(data?.name || "").trim();
+  const options = data?.options || {};
+
+  if (!projectPath || !name) {
+    return {
+      success: false,
+      message: "Profile name is required.",
+      profiles: [],
+    };
+  }
+
+  const profiles = readPublicationProfiles(projectPath);
+  const now = new Date().toISOString();
+  const existing = profiles.find(
+    (profile) =>
+      String(profile.name).toLocaleLowerCase() ===
+      name.toLocaleLowerCase()
+  );
+
+  if (existing) {
+    existing.options = options;
+    existing.updatedAt = now;
+  } else {
+    profiles.push({
+      id: `profile-${Date.now()}-${Math.random()
+        .toString(16)
+        .slice(2)}`,
+      name,
+      options,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+
+  savePublicationProfiles(projectPath, profiles);
+
+  return {
+    success: true,
+    message: "Publication profile saved.",
+    profiles,
+  };
+});
+
+ipcMain.handle("publish:deleteProfile", async (_, data) => {
+  const projectPath = data?.projectPath;
+  const profileId = String(data?.profileId || "");
+
+  if (!projectPath || !profileId) {
+    return {
+      success: false,
+      message: "Publication profile is required.",
+      profiles: [],
+    };
+  }
+
+  const profiles = readPublicationProfiles(
+    projectPath
+  ).filter((profile) => profile.id !== profileId);
+  savePublicationProfiles(projectPath, profiles);
+
+  return {
+    success: true,
+    message: "Publication profile deleted.",
+    profiles,
+  };
+});
+
+ipcMain.handle("publish:listQueue", async (_, data) => {
+  const projectPath = data?.projectPath;
+
+  if (!projectPath) return [];
+
+  return readPublicationQueue(projectPath).sort(
+    (a, b) =>
+      new Date(b.createdAt || 0).getTime() -
+      new Date(a.createdAt || 0).getTime()
+  );
+});
+
+ipcMain.handle("publish:enqueue", async (_, data) => {
+  const projectPath = data?.projectPath;
+  const documents = Array.isArray(data?.documents)
+    ? data.documents
+    : [];
+  const options = data?.options || {};
+
+  if (!projectPath || documents.length === 0) {
+    return {
+      success: false,
+      message: "Select at least one document.",
+      jobs: readPublicationQueue(projectPath),
+    };
+  }
+
+  const jobs = readPublicationQueue(projectPath);
+  const now = new Date().toISOString();
+
+  for (const document of documents) {
+    jobs.push({
+      id: `publication-job-${Date.now()}-${Math.random()
+        .toString(16)
+        .slice(2)}`,
+      documentId: Number(document.documentId),
+      documentName: String(document.documentName),
+      basePdf: document.basePdf || null,
+      profileId: data?.profileId || null,
+      profileName: data?.profileName || null,
+      options,
+      status: "Queued",
+      progress: 0,
+      message: "Waiting to publish...",
+      createdAt: now,
+      startedAt: null,
+      completedAt: null,
+      durationMs: null,
+      folderPath: null,
+      files: [],
+      error: null,
+      attempts: 0,
+    });
+  }
+
+  savePublicationQueue(projectPath, jobs);
+  void processPublicationQueue(projectPath);
+
+  return {
+    success: true,
+    message: `${documents.length} publication job(s) queued.`,
+    jobs,
+  };
+});
+
+ipcMain.handle("publish:retryQueueJob", async (_, data) => {
+  const projectPath = data?.projectPath;
+  const jobId = String(data?.jobId || "");
+  const jobs = readPublicationQueue(projectPath);
+  const job = jobs.find((item) => item.id === jobId);
+
+  if (!projectPath || !job) {
+    return {
+      success: false,
+      message: "Publication job not found.",
+      jobs,
+    };
+  }
+
+  job.status = "Queued";
+  job.progress = 0;
+  job.message = "Waiting to retry...";
+  job.error = null;
+  job.startedAt = null;
+  job.completedAt = null;
+  job.attempts = Number(job.attempts || 0) + 1;
+  savePublicationQueue(projectPath, jobs);
+  void processPublicationQueue(projectPath);
+
+  return {
+    success: true,
+    message: "Publication job queued for retry.",
+    jobs,
+  };
+});
+
+ipcMain.handle("publish:cancelQueueJob", async (_, data) => {
+  const projectPath = data?.projectPath;
+  const jobId = String(data?.jobId || "");
+  const jobs = readPublicationQueue(projectPath);
+  const job = jobs.find((item) => item.id === jobId);
+
+  if (!projectPath || !job) {
+    return {
+      success: false,
+      message: "Publication job not found.",
+      jobs,
+    };
+  }
+
+  if (job.status === "Running") {
+    publicationQueueCancelRequests.add(job.id);
+    job.message = "Cancellation requested...";
+  } else if (job.status === "Queued") {
+    job.status = "Cancelled";
+    job.message = "Publication job cancelled.";
+    job.completedAt = new Date().toISOString();
+  }
+
+  savePublicationQueue(projectPath, jobs);
+
+  return {
+    success: true,
+    message: "Cancellation requested.",
+    jobs,
+  };
+});
+
+ipcMain.handle("publish:removeQueueJob", async (_, data) => {
+  const projectPath = data?.projectPath;
+  const jobId = String(data?.jobId || "");
+  const jobs = readPublicationQueue(projectPath).filter(
+    (job) =>
+      job.id !== jobId || job.status === "Running"
+  );
+  savePublicationQueue(projectPath, jobs);
+
+  return {
+    success: true,
+    message: "Publication job removed.",
+    jobs,
+  };
+});
+
+
+ipcMain.handle("publish:getSettings", async (_, data) => {
+  const projectPath = data?.projectPath;
+
+  if (!projectPath) {
+    return {
+      workerCount: 2,
+      isPaused: false,
+    };
+  }
+
+  return readPublicationSettings(projectPath);
+});
+
+ipcMain.handle("publish:updateSettings", async (_, data) => {
+  const projectPath = data?.projectPath;
+
+  if (!projectPath) {
+    return {
+      success: false,
+      message: "Project path is required.",
+      settings: {
+        workerCount: 2,
+        isPaused: false,
+      },
+    };
+  }
+
+  const current = readPublicationSettings(projectPath);
+  const settings = savePublicationSettings(
+    projectPath,
+    {
+      workerCount:
+        data?.workerCount ?? current.workerCount,
+      isPaused:
+        data?.isPaused ?? current.isPaused,
+    }
+  );
+
+  if (!settings.isPaused) {
+    void processPublicationQueue(projectPath);
+  }
+
+  return {
+    success: true,
+    message: settings.isPaused
+      ? "Publication queue paused."
+      : `Publication queue configured for ${settings.workerCount} worker(s).`,
+    settings,
+  };
+});
+
+ipcMain.handle("publish:previewIncremental", async (_, data) => {
+  const projectPath = data?.projectPath;
+  const documentId = Number(data?.documentId);
+
+  if (!projectPath || !Number.isFinite(documentId)) {
+    return {
+      success: false,
+      message: "Project and document are required.",
+      preview: null,
+    };
+  }
+
+  const collected = collectPublishedWordData(
+    projectPath,
+    documentId,
+    data?.options || {}
+  );
+  const preview = getIncrementalPageSelection(
+    projectPath,
+    documentId,
+    collected
+  );
+
+  return {
+    success: true,
+    message: preview.hasPreviousSnapshot
+      ? `${preview.changedPageNumbers.length} changed page(s) detected.`
+      : "No previous publication snapshot exists; all pages are considered changed.",
+    preview: {
+      ...preview,
+      totalPages: collected.pages.length,
+    },
+  };
+});
+
+ipcMain.handle("publish:resumeQueue", async (_, data) => {
+  const projectPath = data?.projectPath;
+
+  if (!projectPath) {
+    return {
+      success: false,
+      message: "Project path is required.",
+    };
+  }
+
+  const settings = savePublicationSettings(
+    projectPath,
+    {
+      ...readPublicationSettings(projectPath),
+      isPaused: false,
+    }
+  );
+
+  const jobs = readPublicationQueue(projectPath);
+  let recovered = 0;
+
+  for (const job of jobs) {
+    if (
+      job.status === "Running" &&
+      !activePublicationJobs.has(job.id)
+    ) {
+      job.status = "Queued";
+      job.progress = 0;
+      job.message =
+        "Recovered after application restart.";
+      job.startedAt = null;
+      recovered += 1;
+    }
+  }
+
+  savePublicationQueue(projectPath, jobs);
+  void processPublicationQueue(projectPath);
+
+  return {
+    success: true,
+    message:
+      recovered > 0
+        ? `Publication queue resumed; ${recovered} interrupted job(s) recovered.`
+        : "Publication queue resumed.",
+    settings,
+  };
+});
+
+ipcMain.handle("publish:validateDocument", async (_, data) => {
+  const projectPath = data?.projectPath;
+  const documentId = Number(data?.documentId);
+
+  if (!projectPath || !Number.isFinite(documentId)) {
+    return {
+      success: false,
+      message: "Project and document are required.",
+      validation: null,
+      summary: null,
+    };
+  }
+
+  const collected = collectPublishedWordData(
+    projectPath,
+    documentId,
+    data?.options || {}
+  );
+
+  return {
+    success: true,
+    message: collected.validation.valid
+      ? "Publication validation passed."
+      : "Publication validation found issues.",
+    validation: collected.validation,
+    summary: collected.summary,
+  };
+});
+
+ipcMain.handle("publish:createBundle", async (_, data) => {
+  const projectPath = data?.projectPath;
+  const documentId = Number(data?.documentId);
+  const documentName = String(
+    data?.documentName || `document-${documentId}`
+  );
+  const options = data?.options || {};
+
+  if (!projectPath || !Number.isFinite(documentId)) {
+    return {
+      success: false,
+      message: "Project and document are required.",
+      files: [],
+      record: null,
+    };
+  }
+
+  const startedAt = Date.now();
+  const collected = collectPublishedWordData(
+    projectPath,
+    documentId,
+    options
+  );
+
+  if (collected.pages.length === 0) {
+    return {
+      success: false,
+      message:
+        "No indexed pages are available for publication.",
+      files: [],
+      record: null,
+    };
+  }
+
+  const exportRoot = path.join(
+    projectPath,
+    "Export",
+    "Published"
+  );
+  fs.mkdirSync(exportRoot, { recursive: true });
+
+  const safeBase =
+    path
+      .basename(documentName, path.extname(documentName))
+      .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "_")
+      .trim() || `document-${documentId}`;
+  const timestamp = new Date()
+    .toISOString()
+    .replace(/[:.]/g, "-");
+  const version =
+    readPublishHistory(projectPath).filter(
+      (item) =>
+        Number(item.documentId) === documentId
+    ).length + 1;
+  const publishFolder = path.join(
+    exportRoot,
+    `${safeBase}-v${version}-${timestamp}`
+  );
+  fs.mkdirSync(publishFolder, { recursive: true });
+
+  const files = [];
+  const fullText = collected.pages
+    .map(
+      (page) =>
+        `--- Page ${page.pageNumber} ---\n${page.text}`
+    )
+    .join("\n\n");
+
+  if (options.exportTxt !== false) {
+    const filePath = path.join(
+      publishFolder,
+      `${safeBase}-corrected.txt`
+    );
+    fs.writeFileSync(filePath, fullText, "utf-8");
+    files.push({
+      type: "TXT",
+      fileName: path.basename(filePath),
+      filePath,
+    });
+  }
+
+  if (options.exportJson !== false) {
+    const filePath = path.join(
+      publishFolder,
+      `${safeBase}-corrected.json`
+    );
+    fs.writeFileSync(
+      filePath,
+      JSON.stringify(
+        {
+          version: 1,
+          documentId,
+          documentName,
+          publishedAt: new Date().toISOString(),
+          options,
+          summary: collected.summary,
+          validation: collected.validation,
+          pages: collected.pages,
+        },
+        null,
+        2
+      ),
+      "utf-8"
+    );
+    files.push({
+      type: "JSON",
+      fileName: path.basename(filePath),
+      filePath,
+    });
+  }
+
+  if (options.exportCsv !== false) {
+    const filePath = path.join(
+      publishFolder,
+      `${safeBase}-corrected.csv`
+    );
+    const rows = [
+      [
+        "page",
+        "word_id",
+        "original_text",
+        "published_text",
+        "status",
+        "confidence",
+        "left",
+        "top",
+        "width",
+        "height",
+      ].join(","),
+    ];
+
+    for (const page of collected.pages) {
+      for (const word of page.words) {
+        rows.push(
+          [
+            page.pageNumber,
+            csvEscape(word.id),
+            csvEscape(word.text),
+            csvEscape(word.publishedText),
+            csvEscape(word.status),
+            Number(word.confidence || 0),
+            Number(word.box?.left || 0),
+            Number(word.box?.top || 0),
+            Number(word.box?.width || 0),
+            Number(word.box?.height || 0),
+          ].join(",")
+        );
+      }
+    }
+
+    fs.writeFileSync(filePath, rows.join("\n"), "utf-8");
+    files.push({
+      type: "CSV",
+      fileName: path.basename(filePath),
+      filePath,
+    });
+  }
+
+  if (options.exportHtml !== false) {
+    const filePath = path.join(
+      publishFolder,
+      `${safeBase}-corrected.html`
+    );
+    const escapeHtml = (value) =>
+      String(value || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+
+    const pagesHtml = collected.pages
+      .map(
+        (page) => `
+<section class="page" data-page="${page.pageNumber}">
+  <h2>Page ${page.pageNumber}</h2>
+  ${page.lines
+    .map((line) => `<p>${escapeHtml(line)}</p>`)
+    .join("\n")}
+</section>`
+      )
+      .join("\n");
+
+    const html = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>${escapeHtml(safeBase)} — Corrected OCR</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:960px;margin:0 auto;padding:32px;line-height:1.6}
+.page{padding:24px 0;border-bottom:1px solid #ddd}
+h1,h2{line-height:1.2}
+.meta{padding:12px;background:#f6f7f9;border-radius:8px}
+</style>
+</head>
+<body>
+<h1>${escapeHtml(safeBase)} — Corrected OCR</h1>
+<div class="meta">
+Pages: ${collected.summary.pages} ·
+Published words: ${collected.summary.publishedWords} ·
+Corrected: ${collected.summary.corrected} ·
+Verified: ${collected.summary.verified}
+</div>
+${pagesHtml}
+</body>
+</html>`;
+
+    fs.writeFileSync(filePath, html, "utf-8");
+    files.push({
+      type: "HTML",
+      fileName: path.basename(filePath),
+      filePath,
+    });
+  }
+
+  const reportPath = path.join(
+    publishFolder,
+    `${safeBase}-review-report.json`
+  );
+  fs.writeFileSync(
+    reportPath,
+    JSON.stringify(
+      {
+        documentId,
+        documentName,
+        version,
+        publishedAt: new Date().toISOString(),
+        durationMs: Date.now() - startedAt,
+        summary: collected.summary,
+        validation: collected.validation,
+        options,
+        files,
+      },
+      null,
+      2
+    ),
+    "utf-8"
+  );
+  files.push({
+    type: "REPORT",
+    fileName: path.basename(reportPath),
+    filePath: reportPath,
+  });
+
+  const history = readPublishHistory(projectPath);
+  const record = {
+    id: `publish-${Date.now()}-${Math.random()
+      .toString(16)
+      .slice(2)}`,
+    documentId,
+    documentName,
+    version,
+    publishedAt: new Date().toISOString(),
+    durationMs: Date.now() - startedAt,
+    folderPath: publishFolder,
+    summary: collected.summary,
+    validation: collected.validation,
+    options,
+    files,
+  };
+  history.push(record);
+  savePublishHistory(projectPath, history);
+
+  return {
+    success: true,
+    message: `Published version ${version} with ${files.length} output file(s).`,
+    files,
+    record,
+  };
+});
+
+
+ipcMain.handle("publish:createSearchablePdf", async (_, data) => {
+  const projectPath = data?.projectPath;
+  const documentId = Number(data?.documentId);
+  const documentName = String(
+    data?.documentName || `document-${documentId}`
+  );
+  const basePdf = data?.basePdf;
+  const options = data?.options || {};
+
+  if (
+    !projectPath ||
+    !Number.isFinite(documentId) ||
+    !basePdf ||
+    !fs.existsSync(basePdf)
+  ) {
+    return {
+      success: false,
+      message: "A valid base PDF and indexed document are required.",
+      outputPdf: null,
+      record: null,
+    };
+  }
+
+  const collected = collectPublishedWordData(
+    projectPath,
+    documentId,
+    options
+  );
+
+  if (collected.pages.length === 0) {
+    return {
+      success: false,
+      message: "No indexed pages are available.",
+      outputPdf: null,
+      record: null,
+    };
+  }
+
+  const history = readPublishHistory(projectPath);
+  const version =
+    history.filter(
+      (record) =>
+        Number(record.documentId) === documentId
+    ).length + 1;
+  const safeBase =
+    path
+      .basename(documentName, path.extname(documentName))
+      .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "_")
+      .trim() || `document-${documentId}`;
+  const publishRoot = path.join(
+    projectPath,
+    "Export",
+    "Published"
+  );
+  fs.mkdirSync(publishRoot, { recursive: true });
+  const timestamp = new Date()
+    .toISOString()
+    .replace(/[:.]/g, "-");
+  const folderPath = path.join(
+    publishRoot,
+    `${safeBase}-v${version}-${timestamp}`
+  );
+  fs.mkdirSync(folderPath, { recursive: true });
+
+  const outputPdf = path.join(
+    folderPath,
+    `${safeBase}-corrected-searchable.pdf`
+  );
+  const manifestPath = path.join(
+    folderPath,
+    "searchable-pdf-manifest.json"
+  );
+
+  const fontCandidates = [
+    path.join(projectPath, "Fonts", "NotoSansTelugu-Regular.ttf"),
+    path.join(projectPath, "fonts", "NotoSansTelugu-Regular.ttf"),
+    "C:\\Windows\\Fonts\\Nirmala.ttf",
+    "C:\\Windows\\Fonts\\mangal.ttf",
+  ]
+    .filter((candidate) => fs.existsSync(candidate))
+    .map(windowsPathToWslPath);
+
+  fs.writeFileSync(
+    manifestPath,
+    JSON.stringify(
+      {
+        basePdf: windowsPathToWslPath(basePdf),
+        outputPdf: windowsPathToWslPath(outputPdf),
+        fontPaths: fontCandidates,
+        pages: collected.pages,
+      },
+      null,
+      2
+    ),
+    "utf-8"
+  );
+
+  const scriptPath = path.join(
+    __dirname,
+    "publish_searchable_pdf.py"
+  );
+  const startedAt = Date.now();
+  const result = await runPreviewCommand(
+    "wsl.exe",
+    [
+      "-d",
+      "Ubuntu-24.04",
+      "--",
+      "python3",
+      windowsPathToWslPath(scriptPath),
+      windowsPathToWslPath(manifestPath),
+    ],
+    30 * 60 * 1000
+  );
+
+  if (result.code !== 0 || !fs.existsSync(outputPdf)) {
+    return {
+      success: false,
+      message:
+        result.stderr ||
+        result.stdout ||
+        "Corrected searchable PDF generation failed.",
+      outputPdf: null,
+      record: null,
+    };
+  }
+
+  let generatorResult = null;
+
+  try {
+    const lines = result.stdout
+      .trim()
+      .split(/\r?\n/)
+      .filter(Boolean);
+    generatorResult = JSON.parse(
+      lines[lines.length - 1]
+    );
+  } catch {
+    generatorResult = null;
+  }
+
+  const verifyResult = await runPreviewCommand(
+    "wsl.exe",
+    [
+      "-d",
+      "Ubuntu-24.04",
+      "--",
+      "pdftotext",
+      windowsPathToWslPath(outputPdf),
+      "-",
+    ],
+    5 * 60 * 1000
+  );
+
+  const extractedCharacters =
+    verifyResult.code === 0
+      ? verifyResult.stdout.trim().length
+      : 0;
+
+  const record = {
+    id: `publish-pdf-${Date.now()}-${Math.random()
+      .toString(16)
+      .slice(2)}`,
+    documentId,
+    documentName,
+    version,
+    publishedAt: new Date().toISOString(),
+    durationMs: Date.now() - startedAt,
+    folderPath,
+    summary: collected.summary,
+    validation: collected.validation,
+    options: {
+      ...options,
+      correctedSearchablePdf: true,
+    },
+    searchablePdf: {
+      fileName: path.basename(outputPdf),
+      filePath: outputPdf,
+      size: fs.statSync(outputPdf).size,
+      extractedCharacters,
+      fontPath: generatorResult?.fontPath || null,
+      missingIndexPages:
+        generatorResult?.missingIndexPages || [],
+    },
+    files: [
+      {
+        type: "PDF",
+        fileName: path.basename(outputPdf),
+        filePath: outputPdf,
+      },
+    ],
+  };
+
+  history.push(record);
+  savePublishHistory(projectPath, history);
+
+  return {
+    success: true,
+    message:
+      extractedCharacters > 0
+        ? `Corrected searchable PDF created. ${extractedCharacters.toLocaleString()} searchable characters verified.`
+        : "PDF created, but searchable text verification returned no characters.",
+    outputPdf,
+    record,
+  };
+});
+
+ipcMain.handle("publish:listHistory", async (_, data) => {
+  const projectPath = data?.projectPath;
+  const documentId = Number(data?.documentId);
+
+  if (!projectPath || !Number.isFinite(documentId)) {
+    return [];
+  }
+
+  return readPublishHistory(projectPath)
+    .filter(
+      (record) =>
+        Number(record.documentId) === documentId
+    )
+    .sort(
+      (a, b) =>
+        Number(b.version || 0) -
+        Number(a.version || 0)
+    );
+});
+
 ipcMain.handle("wordIndex:listBatchTransactions", async (_, data) => {
   const projectPath = data?.projectPath;
   const documentId = Number(data?.documentId);

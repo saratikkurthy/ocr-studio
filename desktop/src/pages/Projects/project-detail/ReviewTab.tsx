@@ -52,6 +52,80 @@ type DocumentWordResult = OcrIndexedWord & {
     sourceFile: string;
 };
 
+type PublicationProfile = {
+    id: string;
+    name: string;
+    options: Record<string, boolean>;
+    createdAt: string;
+    updatedAt: string;
+};
+
+type PublicationQueueJob = {
+    id: string;
+    documentId: number;
+    documentName: string;
+    profileId: string | null;
+    profileName: string | null;
+    options: Record<string, boolean>;
+    status: "Queued" | "Running" | "Completed" | "Failed" | "Cancelled";
+    progress: number;
+    message: string;
+    createdAt: string;
+    startedAt: string | null;
+    completedAt: string | null;
+    durationMs: number | null;
+    folderPath: string | null;
+    files: Array<{
+        type: string;
+        fileName: string;
+        filePath: string;
+    }>;
+    error: string | null;
+    attempts: number;
+    incremental?: {
+        enabled: boolean;
+        hasPreviousSnapshot: boolean;
+        changedPageNumbers: number[];
+        unchangedPageNumbers: number[];
+    } | null;
+};
+
+type PublishValidation = {
+    valid: boolean;
+    missingPages: number[];
+    emptyPages: number[];
+    malformedWords: number;
+    invalidBoxes: number;
+    duplicateWordIds: number;
+};
+
+type PublishSummary = {
+    pages: number;
+    words: number;
+    corrected: number;
+    verified: number;
+    ignored: number;
+    unreviewed: number;
+    publishedWords: number;
+};
+
+type PublishRecord = {
+    id: string;
+    documentId: number;
+    documentName: string;
+    version: number;
+    publishedAt: string;
+    durationMs: number;
+    folderPath: string;
+    summary: PublishSummary;
+    validation: PublishValidation;
+    files: Array<{
+        type: string;
+        fileName: string;
+        filePath: string;
+    }>;
+};
+
 type BatchCorrectionTransaction = {
     id: string;
     documentId: number;
@@ -707,6 +781,62 @@ export default function ReviewTab({
     const [correctionRules, setCorrectionRules] =
         useState<CorrectionRule[]>([]);
     const [ruleMessage, setRuleMessage] = useState("");
+    const [publishOptions, setPublishOptions] = useState({
+        includeCorrected: true,
+        includeVerified: true,
+        includeUnreviewed: true,
+        includeIgnored: false,
+        exportTxt: true,
+        exportJson: true,
+        exportCsv: true,
+        exportHtml: true,
+        exportTsv: false,
+        exportMarkdown: false,
+        exportHocr: false,
+        exportAlto: false,
+        exportPageXml: false,
+        incrementalPublishing: false,
+    });
+    const [publishValidation, setPublishValidation] =
+        useState<PublishValidation | null>(null);
+    const [publishSummary, setPublishSummary] =
+        useState<PublishSummary | null>(null);
+    const [publishHistory, setPublishHistory] =
+        useState<PublishRecord[]>([]);
+    const [publishMessage, setPublishMessage] = useState("");
+    const [publishValidating, setPublishValidating] =
+        useState(false);
+    const [publishRunning, setPublishRunning] = useState(false);
+    const [searchablePdfRunning, setSearchablePdfRunning] =
+        useState(false);
+    const [searchablePdfPath, setSearchablePdfPath] =
+        useState<string | null>(null);
+    const [publicationProfiles, setPublicationProfiles] =
+        useState<PublicationProfile[]>([]);
+    const [publicationProfileName, setPublicationProfileName] =
+        useState("");
+    const [selectedPublicationProfileId, setSelectedPublicationProfileId] =
+        useState<string | null>(null);
+    const [publicationQueue, setPublicationQueue] =
+        useState<PublicationQueueJob[]>([]);
+    const [selectedQueueDocumentIds, setSelectedQueueDocumentIds] =
+        useState<Set<number>>(new Set());
+    const [publicationQueueMessage, setPublicationQueueMessage] =
+        useState("");
+    const [publicationQueueLoading, setPublicationQueueLoading] =
+        useState(false);
+    const [publicationWorkerCount, setPublicationWorkerCount] =
+        useState(2);
+    const [publicationQueuePaused, setPublicationQueuePaused] =
+        useState(false);
+    const [incrementalPreview, setIncrementalPreview] =
+        useState<{
+            hasPreviousSnapshot: boolean;
+            changedPageNumbers: number[];
+            unchangedPageNumbers: number[];
+            previousPublishedAt: string | null;
+            totalPages: number;
+        } | null>(null);
 
     useEffect(() => {
         if (
@@ -757,6 +887,12 @@ export default function ReviewTab({
         setBatchTransactions([]);
         setCorrectionRules([]);
         setRuleMessage("");
+        setPublishValidation(null);
+        setPublishSummary(null);
+        setPublishHistory([]);
+        setPublishMessage("");
+        setSearchablePdfPath(null);
+        setPublicationQueueMessage("");
     }, [selectedDocumentId]);
 
     const selectedDocument = reviewableDocuments.find(
@@ -1049,6 +1185,455 @@ export default function ReviewTab({
         setSelectedWordId(word.id);
         setPendingDocumentWordId(null);
     }, [pendingDocumentWordId, wordIndexPage]);
+
+    const loadPublicationSettings = async () => {
+        try {
+            const settings =
+                await window.ocrStudio.getPublicationSettings({
+                    projectPath,
+                });
+            setPublicationWorkerCount(settings.workerCount);
+            setPublicationQueuePaused(settings.isPaused);
+        } catch {
+            setPublicationWorkerCount(2);
+            setPublicationQueuePaused(false);
+        }
+    };
+
+    const updatePublicationWorkers = async (
+        workerCount: number
+    ) => {
+        const result =
+            await window.ocrStudio.updatePublicationSettings({
+                projectPath,
+                workerCount,
+            });
+        setPublicationWorkerCount(
+            result.settings.workerCount
+        );
+        setPublicationQueuePaused(
+            result.settings.isPaused
+        );
+        setPublicationQueueMessage(result.message);
+    };
+
+    const togglePublicationPause = async () => {
+        const result =
+            await window.ocrStudio.updatePublicationSettings({
+                projectPath,
+                isPaused: !publicationQueuePaused,
+            });
+        setPublicationWorkerCount(
+            result.settings.workerCount
+        );
+        setPublicationQueuePaused(
+            result.settings.isPaused
+        );
+        setPublicationQueueMessage(result.message);
+        await loadPublicationQueue();
+    };
+
+    const previewIncrementalPublication = async () => {
+        if (selectedDocumentId === null) return;
+
+        try {
+            const result =
+                await window.ocrStudio.previewIncrementalPublication({
+                    projectPath,
+                    documentId: selectedDocumentId,
+                    options: publishOptions,
+                });
+            setIncrementalPreview(result.preview);
+            setPublicationQueueMessage(result.message);
+        } catch (error) {
+            setIncrementalPreview(null);
+            setPublicationQueueMessage(
+                error instanceof Error
+                    ? error.message
+                    : "Could not preview changed pages."
+            );
+        }
+    };
+
+    const loadPublicationProfiles = async () => {
+        try {
+            const profiles =
+                await window.ocrStudio.listPublicationProfiles({
+                    projectPath,
+                });
+            setPublicationProfiles(profiles);
+        } catch {
+            setPublicationProfiles([]);
+        }
+    };
+
+    const savePublicationProfile = async () => {
+        if (!publicationProfileName.trim()) {
+            setPublicationQueueMessage(
+                "Enter a publication profile name."
+            );
+            return;
+        }
+
+        try {
+            const result =
+                await window.ocrStudio.savePublicationProfile({
+                    projectPath,
+                    name: publicationProfileName,
+                    options: publishOptions,
+                });
+
+            setPublicationProfiles(result.profiles);
+            setPublicationQueueMessage(result.message);
+            setPublicationProfileName("");
+        } catch (error) {
+            setPublicationQueueMessage(
+                error instanceof Error
+                    ? error.message
+                    : "Could not save the publication profile."
+            );
+        }
+    };
+
+    const applyPublicationProfile = (
+        profile: PublicationProfile
+    ) => {
+        setSelectedPublicationProfileId(profile.id);
+        setPublishOptions((current) => ({
+            ...current,
+            ...profile.options,
+        }));
+        setPublicationQueueMessage(
+            `Loaded publication profile “${profile.name}”.`
+        );
+    };
+
+    const deletePublicationProfile = async (
+        profileId: string
+    ) => {
+        try {
+            const result =
+                await window.ocrStudio.deletePublicationProfile({
+                    projectPath,
+                    profileId,
+                });
+
+            setPublicationProfiles(result.profiles);
+            setPublicationQueueMessage(result.message);
+
+            if (selectedPublicationProfileId === profileId) {
+                setSelectedPublicationProfileId(null);
+            }
+        } catch {
+            setPublicationQueueMessage(
+                "Could not delete the publication profile."
+            );
+        }
+    };
+
+    const loadPublicationQueue = async () => {
+        try {
+            const jobs =
+                await window.ocrStudio.listPublicationQueue({
+                    projectPath,
+                });
+            setPublicationQueue(jobs);
+        } catch {
+            setPublicationQueue([]);
+        }
+    };
+
+    const enqueuePublicationJobs = async () => {
+        const selectedDocuments = reviewableDocuments
+            .filter((document) =>
+                selectedQueueDocumentIds.has(document.id)
+            )
+            .map((document) => ({
+                documentId: document.id,
+                documentName:
+                    document.fileName ||
+                    `document-${document.id}`,
+                basePdf:
+                    document.destinationPath ||
+                    document.sourcePath ||
+                    document.outputPath ||
+                    document.searchablePath ||
+                    null,
+            }));
+
+        if (selectedDocuments.length === 0) {
+            setPublicationQueueMessage(
+                "Select at least one document for the queue."
+            );
+            return;
+        }
+
+        const profile = publicationProfiles.find(
+            (item) =>
+                item.id === selectedPublicationProfileId
+        );
+
+        setPublicationQueueLoading(true);
+
+        try {
+            const result =
+                await window.ocrStudio.enqueuePublicationJobs({
+                    projectPath,
+                    documents: selectedDocuments,
+                    profileId: profile?.id || null,
+                    profileName: profile?.name || null,
+                    options: publishOptions,
+                });
+
+            setPublicationQueueMessage(result.message);
+            setSelectedQueueDocumentIds(new Set());
+            await loadPublicationQueue();
+        } catch (error) {
+            setPublicationQueueMessage(
+                error instanceof Error
+                    ? error.message
+                    : "Could not queue publication jobs."
+            );
+        } finally {
+            setPublicationQueueLoading(false);
+        }
+    };
+
+    const retryPublicationJob = async (jobId: string) => {
+        await window.ocrStudio.retryPublicationJob({
+            projectPath,
+            jobId,
+        });
+        await loadPublicationQueue();
+    };
+
+    const cancelPublicationJob = async (jobId: string) => {
+        await window.ocrStudio.cancelPublicationJob({
+            projectPath,
+            jobId,
+        });
+        await loadPublicationQueue();
+    };
+
+    const removePublicationJob = async (jobId: string) => {
+        await window.ocrStudio.removePublicationJob({
+            projectPath,
+            jobId,
+        });
+        await loadPublicationQueue();
+    };
+
+    const resumePublicationQueue = async () => {
+        const result =
+            await window.ocrStudio.resumePublicationQueue({
+                projectPath,
+            });
+        setPublicationQueueMessage(result.message);
+        await loadPublicationQueue();
+    };
+
+    const toggleQueueDocument = (documentId: number) => {
+        setSelectedQueueDocumentIds((current) => {
+            const next = new Set(current);
+
+            if (next.has(documentId)) {
+                next.delete(documentId);
+            } else {
+                next.add(documentId);
+            }
+
+            return next;
+        });
+    };
+
+    const validatePublication = async () => {
+        if (selectedDocumentId === null) return;
+
+        setPublishValidating(true);
+        setPublishMessage("");
+
+        try {
+            const result =
+                await window.ocrStudio.validatePublishedDocument({
+                    projectPath,
+                    documentId: selectedDocumentId,
+                    options: {
+                        includeCorrected:
+                            publishOptions.includeCorrected,
+                        includeVerified:
+                            publishOptions.includeVerified,
+                        includeUnreviewed:
+                            publishOptions.includeUnreviewed,
+                        includeIgnored:
+                            publishOptions.includeIgnored,
+                    },
+                });
+
+            setPublishValidation(result.validation);
+            setPublishSummary(result.summary);
+            setPublishMessage(result.message);
+        } catch (error) {
+            setPublishValidation(null);
+            setPublishSummary(null);
+            setPublishMessage(
+                error instanceof Error
+                    ? error.message
+                    : "Could not validate the publication."
+            );
+        } finally {
+            setPublishValidating(false);
+        }
+    };
+
+    const loadPublishHistory = async () => {
+        if (selectedDocumentId === null) return;
+
+        try {
+            const history =
+                await window.ocrStudio.listPublishHistory({
+                    projectPath,
+                    documentId: selectedDocumentId,
+                });
+
+            setPublishHistory(history);
+        } catch {
+            setPublishHistory([]);
+        }
+    };
+
+    const publishCorrectedSearchablePdf = async () => {
+        if (
+            selectedDocumentId === null ||
+            !selectedDocument
+        ) {
+            return;
+        }
+
+        const basePdf =
+            selectedDocument.destinationPath ||
+            selectedDocument.sourcePath ||
+            selectedDocument.outputPath ||
+            selectedDocument.searchablePath;
+
+        if (!basePdf) {
+            setPublishMessage(
+                "No base PDF path is available for this document."
+            );
+            return;
+        }
+
+        setSearchablePdfRunning(true);
+        setPublishMessage("");
+        setSearchablePdfPath(null);
+
+        try {
+            const result =
+                await window.ocrStudio.createCorrectedSearchablePdf({
+                    projectPath,
+                    documentId: selectedDocumentId,
+                    documentName:
+                        selectedDocument.fileName ||
+                        `document-${selectedDocumentId}`,
+                    basePdf,
+                    options: {
+                        includeCorrected:
+                            publishOptions.includeCorrected,
+                        includeVerified:
+                            publishOptions.includeVerified,
+                        includeUnreviewed:
+                            publishOptions.includeUnreviewed,
+                        includeIgnored:
+                            publishOptions.includeIgnored,
+                    },
+                });
+
+            setPublishMessage(result.message);
+
+            if (result.success && result.outputPdf) {
+                setSearchablePdfPath(result.outputPdf);
+                await loadPublishHistory();
+            }
+        } catch (error) {
+            setPublishMessage(
+                error instanceof Error
+                    ? error.message
+                    : "Could not rebuild the searchable PDF."
+            );
+        } finally {
+            setSearchablePdfRunning(false);
+        }
+    };
+
+    const publishApprovedCorrections = async () => {
+        if (
+            selectedDocumentId === null ||
+            !selectedDocument
+        ) {
+            return;
+        }
+
+        if (
+            !publishOptions.exportTxt &&
+            !publishOptions.exportJson &&
+            !publishOptions.exportCsv &&
+            !publishOptions.exportHtml &&
+            !publishOptions.exportTsv &&
+            !publishOptions.exportMarkdown &&
+            !publishOptions.exportHocr &&
+            !publishOptions.exportAlto &&
+            !publishOptions.exportPageXml
+        ) {
+            setPublishMessage(
+                "Select at least one export format."
+            );
+            return;
+        }
+
+        setPublishRunning(true);
+        setPublishMessage("");
+
+        try {
+            const result =
+                await window.ocrStudio.createPublishedBundle({
+                    projectPath,
+                    documentId: selectedDocumentId,
+                    documentName:
+                        selectedDocument.fileName ||
+                        `document-${selectedDocumentId}`,
+                    options: publishOptions,
+                });
+
+            setPublishMessage(result.message);
+
+            if (result.success && result.record) {
+                setPublishValidation(
+                    result.record.validation
+                );
+                setPublishSummary(result.record.summary);
+                await loadPublishHistory();
+            }
+        } catch (error) {
+            setPublishMessage(
+                error instanceof Error
+                    ? error.message
+                    : "Could not publish approved corrections."
+            );
+        } finally {
+            setPublishRunning(false);
+        }
+    };
+
+    const updatePublishOption = (
+        key: keyof typeof publishOptions,
+        value: boolean
+    ) => {
+        setPublishOptions((current) => ({
+            ...current,
+            [key]: value,
+        }));
+        setPublishValidation(null);
+        setPublishSummary(null);
+    };
 
     const loadBatchTransactions = async () => {
         if (selectedDocumentId === null) return;
@@ -1964,6 +2549,883 @@ export default function ReviewTab({
                             </div>
                         </div>
                     )}
+            </section>
+
+            <section className="publish-corrections-panel">
+                <div className="publish-panel-header">
+                    <div>
+                        <span className="eyebrow">
+                            Publish approved corrections
+                        </span>
+                        <strong>
+                            Create a versioned publication bundle
+                        </strong>
+                        <small>
+                            Export corrected OCR text, structured word
+                            data, and a complete validation report.
+                        </small>
+                    </div>
+
+                    <div className="publish-header-actions">
+                        <button
+                            type="button"
+                            className="small-button"
+                            disabled={
+                                publishValidating ||
+                                selectedDocumentId === null
+                            }
+                            onClick={() =>
+                                void validatePublication()
+                            }
+                        >
+                            {publishValidating
+                                ? "Validating..."
+                                : "Validate"}
+                        </button>
+
+                        <button
+                            type="button"
+                            className="small-button"
+                            disabled={
+                                selectedDocumentId === null
+                            }
+                            onClick={() =>
+                                void loadPublishHistory()
+                            }
+                        >
+                            Load history
+                        </button>
+
+                        <button
+                            type="button"
+                            className="small-button"
+                            disabled={
+                                searchablePdfRunning ||
+                                selectedDocumentId === null
+                            }
+                            onClick={() =>
+                                void publishCorrectedSearchablePdf()
+                            }
+                        >
+                            {searchablePdfRunning
+                                ? "Building PDF..."
+                                : "Build searchable PDF"}
+                        </button>
+
+                        <button
+                            type="button"
+                            className="small-button primary"
+                            disabled={
+                                publishRunning ||
+                                selectedDocumentId === null
+                            }
+                            onClick={() =>
+                                void publishApprovedCorrections()
+                            }
+                        >
+                            {publishRunning
+                                ? "Publishing..."
+                                : "Publish version"}
+                        </button>
+                    </div>
+                </div>
+
+                <div className="publish-options-grid">
+                    <fieldset>
+                        <legend>Word inclusion</legend>
+
+                        <label>
+                            <input
+                                type="checkbox"
+                                checked={
+                                    publishOptions.includeCorrected
+                                }
+                                onChange={(event) =>
+                                    updatePublishOption(
+                                        "includeCorrected",
+                                        event.target.checked
+                                    )
+                                }
+                            />
+                            Corrected words
+                        </label>
+
+                        <label>
+                            <input
+                                type="checkbox"
+                                checked={
+                                    publishOptions.includeVerified
+                                }
+                                onChange={(event) =>
+                                    updatePublishOption(
+                                        "includeVerified",
+                                        event.target.checked
+                                    )
+                                }
+                            />
+                            Verified words
+                        </label>
+
+                        <label>
+                            <input
+                                type="checkbox"
+                                checked={
+                                    publishOptions.includeUnreviewed
+                                }
+                                onChange={(event) =>
+                                    updatePublishOption(
+                                        "includeUnreviewed",
+                                        event.target.checked
+                                    )
+                                }
+                            />
+                            Unreviewed OCR words
+                        </label>
+
+                        <label>
+                            <input
+                                type="checkbox"
+                                checked={
+                                    publishOptions.includeIgnored
+                                }
+                                onChange={(event) =>
+                                    updatePublishOption(
+                                        "includeIgnored",
+                                        event.target.checked
+                                    )
+                                }
+                            />
+                            Ignored words
+                        </label>
+                    </fieldset>
+
+                    <fieldset>
+                        <legend>Export formats</legend>
+
+                        <label>
+                            <input
+                                type="checkbox"
+                                checked={publishOptions.exportTxt}
+                                onChange={(event) =>
+                                    updatePublishOption(
+                                        "exportTxt",
+                                        event.target.checked
+                                    )
+                                }
+                            />
+                            Clean corrected TXT
+                        </label>
+
+                        <label>
+                            <input
+                                type="checkbox"
+                                checked={
+                                    publishOptions.exportJson
+                                }
+                                onChange={(event) =>
+                                    updatePublishOption(
+                                        "exportJson",
+                                        event.target.checked
+                                    )
+                                }
+                            />
+                            Structured JSON
+                        </label>
+
+                        <label>
+                            <input
+                                type="checkbox"
+                                checked={publishOptions.exportCsv}
+                                onChange={(event) =>
+                                    updatePublishOption(
+                                        "exportCsv",
+                                        event.target.checked
+                                    )
+                                }
+                            />
+                            Word-level CSV
+                        </label>
+
+                        <label>
+                            <input
+                                type="checkbox"
+                                checked={
+                                    publishOptions.exportHtml
+                                }
+                                onChange={(event) =>
+                                    updatePublishOption(
+                                        "exportHtml",
+                                        event.target.checked
+                                    )
+                                }
+                            />
+                            Readable HTML
+                        </label>
+                        <label>
+                            <input
+                                type="checkbox"
+                                checked={publishOptions.exportTsv}
+                                onChange={(event) =>
+                                    updatePublishOption(
+                                        "exportTsv",
+                                        event.target.checked
+                                    )
+                                }
+                            />
+                            Word-level TSV
+                        </label>
+
+                        <label>
+                            <input
+                                type="checkbox"
+                                checked={
+                                    publishOptions.exportMarkdown
+                                }
+                                onChange={(event) =>
+                                    updatePublishOption(
+                                        "exportMarkdown",
+                                        event.target.checked
+                                    )
+                                }
+                            />
+                            Markdown
+                        </label>
+
+                        <label>
+                            <input
+                                type="checkbox"
+                                checked={publishOptions.exportHocr}
+                                onChange={(event) =>
+                                    updatePublishOption(
+                                        "exportHocr",
+                                        event.target.checked
+                                    )
+                                }
+                            />
+                            hOCR
+                        </label>
+
+                        <label>
+                            <input
+                                type="checkbox"
+                                checked={publishOptions.exportAlto}
+                                onChange={(event) =>
+                                    updatePublishOption(
+                                        "exportAlto",
+                                        event.target.checked
+                                    )
+                                }
+                            />
+                            ALTO XML
+                        </label>
+
+                        <label>
+                            <input
+                                type="checkbox"
+                                checked={
+                                    publishOptions.exportPageXml
+                                }
+                                onChange={(event) =>
+                                    updatePublishOption(
+                                        "exportPageXml",
+                                        event.target.checked
+                                    )
+                                }
+                            />
+                            PAGE XML
+                        </label>
+                        <label>
+                            <input
+                                type="checkbox"
+                                checked={
+                                    publishOptions.incrementalPublishing
+                                }
+                                onChange={(event) =>
+                                    updatePublishOption(
+                                        "incrementalPublishing",
+                                        event.target.checked
+                                    )
+                                }
+                            />
+                            Changed pages only
+                        </label>
+                    </fieldset>
+                </div>
+
+                <div className="publication-profiles-panel">
+                    <div className="publication-section-header">
+                        <div>
+                            <span>Publication profiles</span>
+                            <strong>
+                                Save and reuse export presets
+                            </strong>
+                        </div>
+
+                        <button
+                            type="button"
+                            className="small-button"
+                            onClick={() =>
+                                void loadPublicationProfiles()
+                            }
+                        >
+                            Load profiles
+                        </button>
+                    </div>
+
+                    <div className="publication-profile-create">
+                        <input
+                            value={publicationProfileName}
+                            placeholder="Profile name, for example Archive"
+                            onChange={(event) =>
+                                setPublicationProfileName(
+                                    event.target.value
+                                )
+                            }
+                        />
+                        <button
+                            type="button"
+                            className="small-button primary"
+                            onClick={() =>
+                                void savePublicationProfile()
+                            }
+                        >
+                            Save current options
+                        </button>
+                    </div>
+
+                    {publicationProfiles.length > 0 && (
+                        <div className="publication-profile-list">
+                            {publicationProfiles.map((profile) => (
+                                <article
+                                    key={profile.id}
+                                    className={
+                                        selectedPublicationProfileId ===
+                                        profile.id
+                                            ? "selected"
+                                            : ""
+                                    }
+                                >
+                                    <button
+                                        type="button"
+                                        className="profile-main"
+                                        onClick={() =>
+                                            applyPublicationProfile(
+                                                profile
+                                            )
+                                        }
+                                    >
+                                        <strong>{profile.name}</strong>
+                                        <small>
+                                            {
+                                                Object.values(
+                                                    profile.options
+                                                ).filter(Boolean).length
+                                            }{" "}
+                                            enabled option(s)
+                                        </small>
+                                    </button>
+
+                                    <button
+                                        type="button"
+                                        className="small-button danger"
+                                        onClick={() =>
+                                            void deletePublicationProfile(
+                                                profile.id
+                                            )
+                                        }
+                                    >
+                                        Delete
+                                    </button>
+                                </article>
+                            ))}
+                        </div>
+                    )}
+                </div>
+
+                <div className="publication-queue-panel">
+                    <div className="publication-section-header">
+                        <div>
+                            <span>Publishing queue</span>
+                            <strong>
+                                Publish multiple indexed documents
+                            </strong>
+                        </div>
+
+                        <div>
+                            <button
+                                type="button"
+                                className="small-button"
+                                onClick={() =>
+                                    void loadPublicationQueue()
+                                }
+                            >
+                                Refresh queue
+                            </button>
+                            <button
+                                type="button"
+                                className="small-button"
+                                onClick={() =>
+                                    void resumePublicationQueue()
+                                }
+                            >
+                                Resume queue
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="publication-performance-controls">
+                        <div>
+                            <label htmlFor="publication-workers">
+                                Parallel workers
+                            </label>
+                            <select
+                                id="publication-workers"
+                                value={publicationWorkerCount}
+                                onChange={(event) =>
+                                    void updatePublicationWorkers(
+                                        Number(event.target.value)
+                                    )
+                                }
+                            >
+                                <option value={1}>1 worker</option>
+                                <option value={2}>2 workers</option>
+                                <option value={3}>3 workers</option>
+                                <option value={4}>4 workers</option>
+                            </select>
+                        </div>
+
+                        <button
+                            type="button"
+                            className={
+                                publicationQueuePaused
+                                    ? "small-button primary"
+                                    : "small-button"
+                            }
+                            onClick={() =>
+                                void togglePublicationPause()
+                            }
+                        >
+                            {publicationQueuePaused
+                                ? "Resume processing"
+                                : "Pause after active jobs"}
+                        </button>
+
+                        <button
+                            type="button"
+                            className="small-button"
+                            disabled={
+                                selectedDocumentId === null
+                            }
+                            onClick={() =>
+                                void previewIncrementalPublication()
+                            }
+                        >
+                            Preview changed pages
+                        </button>
+
+                        <button
+                            type="button"
+                            className="small-button"
+                            onClick={() =>
+                                void loadPublicationSettings()
+                            }
+                        >
+                            Load settings
+                        </button>
+                    </div>
+
+                    {incrementalPreview && (
+                        <div className="incremental-preview-card">
+                            <div>
+                                <span>Changed</span>
+                                <strong>
+                                    {
+                                        incrementalPreview
+                                            .changedPageNumbers.length
+                                    }
+                                </strong>
+                            </div>
+                            <div>
+                                <span>Unchanged</span>
+                                <strong>
+                                    {
+                                        incrementalPreview
+                                            .unchangedPageNumbers.length
+                                    }
+                                </strong>
+                            </div>
+                            <div>
+                                <span>Total</span>
+                                <strong>
+                                    {incrementalPreview.totalPages}
+                                </strong>
+                            </div>
+                            <small>
+                                {incrementalPreview.hasPreviousSnapshot
+                                    ? `Compared with ${
+                                          incrementalPreview.previousPublishedAt
+                                              ? new Date(
+                                                    incrementalPreview.previousPublishedAt
+                                                ).toLocaleString()
+                                              : "the previous publication"
+                                      }.`
+                                    : "No prior snapshot: every page will be exported."}
+                            </small>
+                        </div>
+                    )}
+
+                    <div className="queue-document-picker">
+                        {reviewableDocuments.map((document) => (
+                            <label key={document.id}>
+                                <input
+                                    type="checkbox"
+                                    checked={selectedQueueDocumentIds.has(
+                                        document.id
+                                    )}
+                                    onChange={() =>
+                                        toggleQueueDocument(
+                                            document.id
+                                        )
+                                    }
+                                />
+                                <span>
+                                    {document.fileName ||
+                                        `Document ${document.id}`}
+                                </span>
+                            </label>
+                        ))}
+                    </div>
+
+                    <button
+                        type="button"
+                        className="small-button primary"
+                        disabled={publicationQueueLoading}
+                        onClick={() =>
+                            void enqueuePublicationJobs()
+                        }
+                    >
+                        {publicationQueueLoading
+                            ? "Adding..."
+                            : `Add ${selectedQueueDocumentIds.size || ""} to queue`}
+                    </button>
+
+                    {publicationQueueMessage && (
+                        <div className="publication-queue-message">
+                            {publicationQueueMessage}
+                        </div>
+                    )}
+
+                    {publicationQueue.length > 0 && (
+                        <div className="publication-queue-list">
+                            {publicationQueue.map((job) => (
+                                <article key={job.id}>
+                                    <div className="queue-job-main">
+                                        <div>
+                                            <strong>
+                                                {job.documentName}
+                                            </strong>
+                                            <small>
+                                                {job.profileName ||
+                                                    "Custom options"}{" "}
+                                                · {job.status}
+                                            </small>
+                                        </div>
+
+                                        <div className="queue-progress-track">
+                                            <span
+                                                style={{
+                                                    width: `${Math.max(
+                                                        0,
+                                                        Math.min(
+                                                            100,
+                                                            job.progress
+                                                        )
+                                                    )}%`,
+                                                }}
+                                            />
+                                        </div>
+
+                                        <small>{job.message}</small>
+
+                                        {job.incremental && (
+                                            <small>
+                                                Incremental:{" "}
+                                                {
+                                                    job.incremental
+                                                        .changedPageNumbers
+                                                        .length
+                                                }{" "}
+                                                changed ·{" "}
+                                                {
+                                                    job.incremental
+                                                        .unchangedPageNumbers
+                                                        .length
+                                                }{" "}
+                                                unchanged
+                                            </small>
+                                        )}
+
+                                        {job.error && (
+                                            <em>{job.error}</em>
+                                        )}
+                                    </div>
+
+                                    <div className="queue-job-actions">
+                                        {job.status === "Completed" &&
+                                            job.folderPath && (
+                                                <button
+                                                    type="button"
+                                                    className="small-button"
+                                                    onClick={() =>
+                                                        onOpen(
+                                                            job.folderPath!
+                                                        )
+                                                    }
+                                                >
+                                                    Open
+                                                </button>
+                                            )}
+
+                                        {(job.status === "Failed" ||
+                                            job.status ===
+                                                "Cancelled") && (
+                                            <button
+                                                type="button"
+                                                className="small-button"
+                                                onClick={() =>
+                                                    void retryPublicationJob(
+                                                        job.id
+                                                    )
+                                                }
+                                            >
+                                                Retry
+                                            </button>
+                                        )}
+
+                                        {(job.status === "Queued" ||
+                                            job.status ===
+                                                "Running") && (
+                                            <button
+                                                type="button"
+                                                className="small-button danger"
+                                                onClick={() =>
+                                                    void cancelPublicationJob(
+                                                        job.id
+                                                    )
+                                                }
+                                            >
+                                                Cancel
+                                            </button>
+                                        )}
+
+                                        {job.status !== "Running" && (
+                                            <button
+                                                type="button"
+                                                className="small-button danger"
+                                                onClick={() =>
+                                                    void removePublicationJob(
+                                                        job.id
+                                                    )
+                                                }
+                                            >
+                                                Remove
+                                            </button>
+                                        )}
+                                    </div>
+                                </article>
+                            ))}
+                        </div>
+                    )}
+                </div>
+
+                {publishMessage && (
+                    <div className="publish-message">
+                        {publishMessage}
+                    </div>
+                )}
+                {searchablePdfPath && (
+                    <div className="searchable-pdf-result">
+                        <div>
+                            <strong>
+                                Corrected searchable PDF ready
+                            </strong>
+                            <small>
+                                The original page appearance is retained
+                                with a new invisible Unicode text layer.
+                            </small>
+                        </div>
+
+                        <button
+                            type="button"
+                            className="small-button primary"
+                            onClick={() =>
+                                onOpen(searchablePdfPath)
+                            }
+                        >
+                            Open PDF
+                        </button>
+                    </div>
+                )}
+
+                {publishSummary && publishValidation && (
+                    <div className="publish-summary-grid">
+                        <article>
+                            <span>Pages</span>
+                            <strong>
+                                {publishSummary.pages}
+                            </strong>
+                        </article>
+                        <article>
+                            <span>Published words</span>
+                            <strong>
+                                {publishSummary.publishedWords}
+                            </strong>
+                        </article>
+                        <article>
+                            <span>Corrected</span>
+                            <strong>
+                                {publishSummary.corrected}
+                            </strong>
+                        </article>
+                        <article>
+                            <span>Verified</span>
+                            <strong>
+                                {publishSummary.verified}
+                            </strong>
+                        </article>
+                        <article>
+                            <span>Unreviewed</span>
+                            <strong>
+                                {publishSummary.unreviewed}
+                            </strong>
+                        </article>
+                        <article
+                            className={
+                                publishValidation.valid
+                                    ? "valid"
+                                    : "warning"
+                            }
+                        >
+                            <span>Validation</span>
+                            <strong>
+                                {publishValidation.valid
+                                    ? "Passed"
+                                    : "Review"}
+                            </strong>
+                        </article>
+                    </div>
+                )}
+
+                {publishValidation &&
+                    !publishValidation.valid && (
+                        <div className="publish-validation-issues">
+                            <strong>
+                                Validation findings
+                            </strong>
+                            <span>
+                                Missing pages:{" "}
+                                {
+                                    publishValidation
+                                        .missingPages.length
+                                }
+                            </span>
+                            <span>
+                                Empty pages:{" "}
+                                {
+                                    publishValidation
+                                        .emptyPages.length
+                                }
+                            </span>
+                            <span>
+                                Malformed words:{" "}
+                                {
+                                    publishValidation
+                                        .malformedWords
+                                }
+                            </span>
+                            <span>
+                                Invalid boxes:{" "}
+                                {
+                                    publishValidation
+                                        .invalidBoxes
+                                }
+                            </span>
+                            <span>
+                                Duplicate IDs:{" "}
+                                {
+                                    publishValidation
+                                        .duplicateWordIds
+                                }
+                            </span>
+                        </div>
+                    )}
+
+                {publishHistory.length > 0 && (
+                    <div className="publish-history">
+                        <div>
+                            <strong>Publication history</strong>
+                            <span>
+                                {publishHistory.length} version(s)
+                            </span>
+                        </div>
+
+                        <div className="publish-history-list">
+                            {publishHistory.map((record) => (
+                                <article key={record.id}>
+                                    <div>
+                                        <strong>
+                                            Version {record.version}
+                                        </strong>
+                                        <small>
+                                            {new Date(
+                                                record.publishedAt
+                                            ).toLocaleString()}
+                                        </small>
+                                    </div>
+
+                                    <div>
+                                        <span>
+                                            {
+                                                record.summary
+                                                    .publishedWords
+                                            }{" "}
+                                            words
+                                        </span>
+                                        <span>
+                                            {
+                                                record.summary
+                                                    .corrected
+                                            }{" "}
+                                            corrected
+                                        </span>
+                                        <span>
+                                            {record.files.length}{" "}
+                                            files
+                                        </span>
+                                    </div>
+
+                                    <button
+                                        type="button"
+                                        className="small-button"
+                                        onClick={() =>
+                                            onOpen(
+                                                record.folderPath
+                                            )
+                                        }
+                                    >
+                                        Open folder
+                                    </button>
+                                </article>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                <small className="publish-storage-note">
+                    Versions are stored under Export/Published.
+                    Publication never modifies the OCR source or word
+                    database.
+                </small>
             </section>
 
             <section className="document-word-review">

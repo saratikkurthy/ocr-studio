@@ -1,14 +1,15 @@
-# OCR Studio Phase 6C.3 — Correction Rules and Batch Undo
+# OCR Studio Phase 6D.3 — Publishing Queue, Profiles, and Multi-Format Export
+
+This package includes all Phase 6D.1 and Phase 6D.2 functionality.
 
 ## Replace
 
 - `electron/main.js`
 - `electron/preload.cjs`
+- `electron/publish_searchable_pdf.py`
 - `src/types/electron.d.ts`
 - `src/pages/projects/ProjectDetailPage.css`
 - `src/pages/projects/project-detail/ReviewTab.tsx`
-
-This package includes the complete working Phase 6C.2 code.
 
 ## Restart
 
@@ -19,51 +20,76 @@ npm run dev
 
 ## Added
 
-### Correction Rule Library
+### Publication profiles
 
-- Save the selected OCR word and current corrected text as a reusable rule
-- Store a confidence limit with each rule
-- Load a rule directly into the correction and batch-preview workflow
-- Enable or disable rules without deleting them
-- Delete obsolete rules
-- Rules are stored per document in:
+Save the current publication settings as named profiles such as:
 
-```text
-ocr-word-index/correction-rules.json
-```
+- Archive
+- Web
+- AI Training
+- Research
+- Digital Edition
 
-### Transactional Batch Undo
+Profiles include word-inclusion rules and all selected export formats.
 
-- Every batch correction now creates one transaction
-- Captures the previous status, corrected text, and verification timestamp for every changed word
-- Batch History panel
-- Undo the entire batch with one action
-- Restores each affected word to its exact prior review state
-- Prevents the same transaction from being undone twice
-- Undo actions are also recorded in `correction-history.json`
-- Transactions are stored in:
+Profiles persist in:
 
 ```text
-ocr-word-index/batch-correction-transactions.json
+ocr-word-index/publication-profiles.json
 ```
+
+### Persistent publishing queue
+
+- select multiple indexed documents
+- add them to one queue
+- sequential background processing
+- persistent status across app restarts
+- progress display
+- cancel queued or running jobs
+- retry failed or cancelled jobs
+- remove completed jobs
+- resume pending jobs after restart
+- open completed output folders
+
+Queue state persists in:
+
+```text
+ocr-word-index/publication-queue.json
+```
+
+### Additional formats
+
+In addition to TXT, JSON, CSV, HTML, searchable PDF, and review reports:
+
+- TSV
+- Markdown
+- hOCR
+- ALTO XML 4
+- PAGE XML 2019
+
+These formats include corrected text, confidence, page numbers, word IDs, and
+bounding-box coordinates where applicable.
 
 ## Test
 
-1. Select a word and enter corrected text.
-2. Choose a confidence threshold.
-3. Click `Save current rule`.
-4. Click `Load rules` and confirm the rule appears.
-5. Select the rule and preview matching occurrences.
-6. Apply a batch correction.
-7. Click `Load history`.
-8. Click `Undo batch`.
-9. Confirm all affected words return to their previous statuses and text.
-10. Restart OCR Studio and verify rules and transaction history remain.
+1. Open the Review workspace.
+2. Select output formats including one of TSV, Markdown, hOCR, ALTO XML, or PAGE XML.
+3. Enter a profile name and click `Save current options`.
+4. Click `Load profiles`.
+5. Select the profile and confirm its options are restored.
+6. Under Publishing Queue, select two indexed documents.
+7. Click `Add 2 to queue`.
+8. Click `Refresh queue` while jobs are running.
+9. Confirm each job becomes Completed.
+10. Open each output folder.
+11. Confirm all selected formats were generated.
+12. Queue another job and cancel it.
+13. Retry the cancelled job.
+14. Restart OCR Studio and click `Resume queue`.
+15. Confirm profiles and queue history remain available.
 
-## Safety
+## Scope
 
-A batch undo restores each individual word from the transaction snapshot. It
-does not guess the previous state from correction history.
-
-The next milestone is Phase 6D — publishing approved corrections into revised
-TXT, searchable PDF, and review-report exports.
+This milestone uses a persistent sequential queue. That is intentional for
+stability when publishing large books. True parallel worker limits and
+incremental page-only regeneration are planned for the next performance phase.

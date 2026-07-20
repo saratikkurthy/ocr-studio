@@ -67,6 +67,54 @@ contextBridge.exposeInMainWorld("ocrStudio", {
   applyBatchCorrection: (data) =>
     ipcRenderer.invoke("wordIndex:applyBatchCorrection", data),
 
+  getPublicationSettings: (data) =>
+    ipcRenderer.invoke("publish:getSettings", data),
+
+  updatePublicationSettings: (data) =>
+    ipcRenderer.invoke("publish:updateSettings", data),
+
+  previewIncrementalPublication: (data) =>
+    ipcRenderer.invoke("publish:previewIncremental", data),
+
+  listPublicationProfiles: (data) =>
+    ipcRenderer.invoke("publish:listProfiles", data),
+
+  savePublicationProfile: (data) =>
+    ipcRenderer.invoke("publish:saveProfile", data),
+
+  deletePublicationProfile: (data) =>
+    ipcRenderer.invoke("publish:deleteProfile", data),
+
+  listPublicationQueue: (data) =>
+    ipcRenderer.invoke("publish:listQueue", data),
+
+  enqueuePublicationJobs: (data) =>
+    ipcRenderer.invoke("publish:enqueue", data),
+
+  retryPublicationJob: (data) =>
+    ipcRenderer.invoke("publish:retryQueueJob", data),
+
+  cancelPublicationJob: (data) =>
+    ipcRenderer.invoke("publish:cancelQueueJob", data),
+
+  removePublicationJob: (data) =>
+    ipcRenderer.invoke("publish:removeQueueJob", data),
+
+  resumePublicationQueue: (data) =>
+    ipcRenderer.invoke("publish:resumeQueue", data),
+
+  validatePublishedDocument: (data) =>
+    ipcRenderer.invoke("publish:validateDocument", data),
+
+  createPublishedBundle: (data) =>
+    ipcRenderer.invoke("publish:createBundle", data),
+
+  listPublishHistory: (data) =>
+    ipcRenderer.invoke("publish:listHistory", data),
+
+  createCorrectedSearchablePdf: (data) =>
+    ipcRenderer.invoke("publish:createSearchablePdf", data),
+
   listBatchCorrectionTransactions: (data) =>
     ipcRenderer.invoke("wordIndex:listBatchTransactions", data),
 
