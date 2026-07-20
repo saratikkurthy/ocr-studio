@@ -3541,6 +3541,546 @@ function saveCorrectionRules(projectPath, rules) {
 }
 
 
+
+function getReviewCollaborationPath(projectPath) {
+  return path.join(
+    getWordIndexRoot(projectPath),
+    "review-collaboration.json"
+  );
+}
+
+function readReviewCollaboration(projectPath) {
+  const filePath = getReviewCollaborationPath(
+    projectPath
+  );
+
+  if (!projectPath || !fs.existsSync(filePath)) {
+    return {
+      version: 1,
+      reviewers: [],
+      assignments: [],
+      comments: [],
+      activity: [],
+      updatedAt: null,
+    };
+  }
+
+  try {
+    const parsed = JSON.parse(
+      fs.readFileSync(filePath, "utf-8")
+    );
+
+    return {
+      version: 1,
+      reviewers: Array.isArray(parsed.reviewers)
+        ? parsed.reviewers
+        : [],
+      assignments: Array.isArray(parsed.assignments)
+        ? parsed.assignments
+        : [],
+      comments: Array.isArray(parsed.comments)
+        ? parsed.comments
+        : [],
+      activity: Array.isArray(parsed.activity)
+        ? parsed.activity
+        : [],
+      updatedAt: parsed.updatedAt || null,
+    };
+  } catch {
+    return {
+      version: 1,
+      reviewers: [],
+      assignments: [],
+      comments: [],
+      activity: [],
+      updatedAt: null,
+    };
+  }
+}
+
+function saveReviewCollaboration(
+  projectPath,
+  collaboration
+) {
+  fs.mkdirSync(getWordIndexRoot(projectPath), {
+    recursive: true,
+  });
+
+  const value = {
+    ...collaboration,
+    version: 1,
+    activity: Array.isArray(collaboration.activity)
+      ? collaboration.activity.slice(-1000)
+      : [],
+    updatedAt: new Date().toISOString(),
+  };
+
+  fs.writeFileSync(
+    getReviewCollaborationPath(projectPath),
+    JSON.stringify(value, null, 2),
+    "utf-8"
+  );
+
+  return value;
+}
+
+function appendReviewActivity(
+  collaboration,
+  action,
+  details
+) {
+  collaboration.activity.push({
+    id: `review-activity-${Date.now()}-${Math.random()
+      .toString(16)
+      .slice(2)}`,
+    action,
+    details,
+    createdAt: new Date().toISOString(),
+  });
+}
+
+ipcMain.handle("reviewCollab:getState", async (_, data) => {
+  const projectPath = data?.projectPath;
+
+  if (!projectPath) {
+    return {
+      success: false,
+      message: "Project path is required.",
+      state: null,
+    };
+  }
+
+  return {
+    success: true,
+    message: "Review collaboration loaded.",
+    state: readReviewCollaboration(projectPath),
+  };
+});
+
+ipcMain.handle("reviewCollab:addReviewer", async (_, data) => {
+  const projectPath = data?.projectPath;
+  const name = String(data?.name || "").trim();
+  const role = String(data?.role || "Reviewer").trim();
+
+  if (!projectPath || !name) {
+    return {
+      success: false,
+      message: "Reviewer name is required.",
+      state: null,
+    };
+  }
+
+  const collaboration =
+    readReviewCollaboration(projectPath);
+  const existing = collaboration.reviewers.find(
+    (reviewer) =>
+      String(reviewer.name).toLocaleLowerCase() ===
+      name.toLocaleLowerCase()
+  );
+
+  if (existing) {
+    existing.role = role || existing.role;
+    existing.isActive = true;
+    existing.updatedAt = new Date().toISOString();
+  } else {
+    collaboration.reviewers.push({
+      id: `reviewer-${Date.now()}-${Math.random()
+        .toString(16)
+        .slice(2)}`,
+      name,
+      role: role || "Reviewer",
+      isActive: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  appendReviewActivity(
+    collaboration,
+    "reviewer-added",
+    `${name} added as ${role || "Reviewer"}.`
+  );
+
+  return {
+    success: true,
+    message: "Reviewer saved.",
+    state: saveReviewCollaboration(
+      projectPath,
+      collaboration
+    ),
+  };
+});
+
+ipcMain.handle("reviewCollab:toggleReviewer", async (_, data) => {
+  const projectPath = data?.projectPath;
+  const reviewerId = String(data?.reviewerId || "");
+  const collaboration =
+    readReviewCollaboration(projectPath);
+  const reviewer = collaboration.reviewers.find(
+    (item) => item.id === reviewerId
+  );
+
+  if (!projectPath || !reviewer) {
+    return {
+      success: false,
+      message: "Reviewer not found.",
+      state: collaboration,
+    };
+  }
+
+  reviewer.isActive = !reviewer.isActive;
+  reviewer.updatedAt = new Date().toISOString();
+
+  appendReviewActivity(
+    collaboration,
+    reviewer.isActive
+      ? "reviewer-activated"
+      : "reviewer-deactivated",
+    `${reviewer.name} ${
+      reviewer.isActive ? "activated" : "deactivated"
+    }.`
+  );
+
+  return {
+    success: true,
+    message: reviewer.isActive
+      ? "Reviewer activated."
+      : "Reviewer deactivated.",
+    state: saveReviewCollaboration(
+      projectPath,
+      collaboration
+    ),
+  };
+});
+
+ipcMain.handle("reviewCollab:createAssignment", async (_, data) => {
+  const projectPath = data?.projectPath;
+  const documentId = Number(data?.documentId);
+  const reviewerId = String(data?.reviewerId || "");
+  const scope = String(data?.scope || "document");
+  const pageStart = Number(data?.pageStart || 1);
+  const pageEnd = Number(data?.pageEnd || pageStart);
+  const priority = String(data?.priority || "Normal");
+  const note = String(data?.note || "").trim();
+  const collaboration =
+    readReviewCollaboration(projectPath);
+  const reviewer = collaboration.reviewers.find(
+    (item) => item.id === reviewerId
+  );
+
+  if (
+    !projectPath ||
+    !Number.isFinite(documentId) ||
+    !reviewer
+  ) {
+    return {
+      success: false,
+      message:
+        "Document and active reviewer are required.",
+      state: collaboration,
+    };
+  }
+
+  const assignment = {
+    id: `review-assignment-${Date.now()}-${Math.random()
+      .toString(16)
+      .slice(2)}`,
+    documentId,
+    documentName: String(
+      data?.documentName || `Document ${documentId}`
+    ),
+    reviewerId,
+    reviewerName: reviewer.name,
+    scope,
+    pageStart:
+      scope === "pages"
+        ? Math.max(1, pageStart)
+        : null,
+    pageEnd:
+      scope === "pages"
+        ? Math.max(pageStart, pageEnd)
+        : null,
+    priority,
+    note,
+    status: "Assigned",
+    createdAt: new Date().toISOString(),
+    startedAt: null,
+    completedAt: null,
+    updatedAt: new Date().toISOString(),
+  };
+
+  collaboration.assignments.push(assignment);
+
+  appendReviewActivity(
+    collaboration,
+    "assignment-created",
+    `${reviewer.name} assigned to ${
+      assignment.documentName
+    }${
+      scope === "pages"
+        ? ` pages ${assignment.pageStart}-${assignment.pageEnd}`
+        : ""
+    }.`
+  );
+
+  return {
+    success: true,
+    message: "Review assignment created.",
+    state: saveReviewCollaboration(
+      projectPath,
+      collaboration
+    ),
+  };
+});
+
+ipcMain.handle("reviewCollab:updateAssignment", async (_, data) => {
+  const projectPath = data?.projectPath;
+  const assignmentId = String(
+    data?.assignmentId || ""
+  );
+  const status = String(data?.status || "");
+  const collaboration =
+    readReviewCollaboration(projectPath);
+  const assignment = collaboration.assignments.find(
+    (item) => item.id === assignmentId
+  );
+
+  if (!projectPath || !assignment) {
+    return {
+      success: false,
+      message: "Review assignment not found.",
+      state: collaboration,
+    };
+  }
+
+  assignment.status = status || assignment.status;
+  assignment.updatedAt = new Date().toISOString();
+
+  if (
+    assignment.status === "In Progress" &&
+    !assignment.startedAt
+  ) {
+    assignment.startedAt = new Date().toISOString();
+  }
+
+  if (assignment.status === "Completed") {
+    assignment.completedAt = new Date().toISOString();
+  } else {
+    assignment.completedAt = null;
+  }
+
+  appendReviewActivity(
+    collaboration,
+    "assignment-updated",
+    `${assignment.reviewerName}: ${assignment.documentName} changed to ${assignment.status}.`
+  );
+
+  return {
+    success: true,
+    message: "Assignment status updated.",
+    state: saveReviewCollaboration(
+      projectPath,
+      collaboration
+    ),
+  };
+});
+
+ipcMain.handle("reviewCollab:addComment", async (_, data) => {
+  const projectPath = data?.projectPath;
+  const author = String(data?.author || "").trim();
+  const text = String(data?.text || "").trim();
+  const documentId = Number(data?.documentId);
+  const pageNumber =
+    data?.pageNumber === null ||
+    data?.pageNumber === undefined
+      ? null
+      : Number(data.pageNumber);
+  const wordId = data?.wordId
+    ? String(data.wordId)
+    : null;
+
+  if (
+    !projectPath ||
+    !author ||
+    !text ||
+    !Number.isFinite(documentId)
+  ) {
+    return {
+      success: false,
+      message:
+        "Author, comment, and document are required.",
+      state: null,
+    };
+  }
+
+  const collaboration =
+    readReviewCollaboration(projectPath);
+  const comment = {
+    id: `review-comment-${Date.now()}-${Math.random()
+      .toString(16)
+      .slice(2)}`,
+    documentId,
+    documentName: String(
+      data?.documentName || `Document ${documentId}`
+    ),
+    pageNumber:
+      Number.isFinite(pageNumber) && pageNumber > 0
+        ? pageNumber
+        : null,
+    wordId,
+    author,
+    text,
+    status: "Open",
+    createdAt: new Date().toISOString(),
+    resolvedAt: null,
+    resolvedBy: null,
+  };
+
+  collaboration.comments.push(comment);
+
+  appendReviewActivity(
+    collaboration,
+    "comment-added",
+    `${author} commented on ${comment.documentName}${
+      comment.pageNumber
+        ? ` page ${comment.pageNumber}`
+        : ""
+    }.`
+  );
+
+  return {
+    success: true,
+    message: "Review comment added.",
+    state: saveReviewCollaboration(
+      projectPath,
+      collaboration
+    ),
+  };
+});
+
+ipcMain.handle("reviewCollab:resolveComment", async (_, data) => {
+  const projectPath = data?.projectPath;
+  const commentId = String(data?.commentId || "");
+  const resolvedBy = String(
+    data?.resolvedBy || "Reviewer"
+  ).trim();
+  const collaboration =
+    readReviewCollaboration(projectPath);
+  const comment = collaboration.comments.find(
+    (item) => item.id === commentId
+  );
+
+  if (!projectPath || !comment) {
+    return {
+      success: false,
+      message: "Review comment not found.",
+      state: collaboration,
+    };
+  }
+
+  const resolving = comment.status !== "Resolved";
+  comment.status = resolving ? "Resolved" : "Open";
+  comment.resolvedAt = resolving
+    ? new Date().toISOString()
+    : null;
+  comment.resolvedBy = resolving
+    ? resolvedBy
+    : null;
+
+  appendReviewActivity(
+    collaboration,
+    resolving
+      ? "comment-resolved"
+      : "comment-reopened",
+    `${comment.documentName}: comment ${
+      resolving ? "resolved" : "reopened"
+    } by ${resolvedBy}.`
+  );
+
+  return {
+    success: true,
+    message: resolving
+      ? "Comment resolved."
+      : "Comment reopened.",
+    state: saveReviewCollaboration(
+      projectPath,
+      collaboration
+    ),
+  };
+});
+
+ipcMain.handle("reviewCollab:exportReport", async (_, data) => {
+  const projectPath = data?.projectPath;
+
+  if (!projectPath) {
+    return {
+      success: false,
+      message: "Project path is required.",
+      filePath: null,
+    };
+  }
+
+  const collaboration =
+    readReviewCollaboration(projectPath);
+  const exportFolder = path.join(
+    projectPath,
+    "Export",
+    "Review"
+  );
+  fs.mkdirSync(exportFolder, { recursive: true });
+
+  const timestamp = new Date()
+    .toISOString()
+    .replace(/[:.]/g, "-");
+  const filePath = path.join(
+    exportFolder,
+    `collaborative-review-${timestamp}.json`
+  );
+
+  fs.writeFileSync(
+    filePath,
+    JSON.stringify(
+      {
+        generatedAt: new Date().toISOString(),
+        summary: {
+          reviewers:
+            collaboration.reviewers.length,
+          activeReviewers:
+            collaboration.reviewers.filter(
+              (item) => item.isActive
+            ).length,
+          assignments:
+            collaboration.assignments.length,
+          completedAssignments:
+            collaboration.assignments.filter(
+              (item) =>
+                item.status === "Completed"
+            ).length,
+          openComments:
+            collaboration.comments.filter(
+              (item) => item.status === "Open"
+            ).length,
+          resolvedComments:
+            collaboration.comments.filter(
+              (item) =>
+                item.status === "Resolved"
+            ).length,
+        },
+        ...collaboration,
+      },
+      null,
+      2
+    ),
+    "utf-8"
+  );
+
+  return {
+    success: true,
+    message: "Collaborative review report exported.",
+    filePath,
+  };
+});
+
 function getPublishHistoryPath(projectPath) {
   return path.join(
     getWordIndexRoot(projectPath),
@@ -4918,10 +5458,276 @@ ipcMain.handle("publish:deleteProfile", async (_, data) => {
   };
 });
 
+
+function calculatePublicationDashboard(projectPath) {
+  const jobs = readPublicationQueue(projectPath);
+  const settings = readPublicationSettings(projectPath);
+  const now = Date.now();
+
+  const counts = {
+    total: jobs.length,
+    queued: 0,
+    running: 0,
+    completed: 0,
+    failed: 0,
+    cancelled: 0,
+  };
+
+  let totalCompletedDurationMs = 0;
+  let completedWithDuration = 0;
+  let totalGeneratedFiles = 0;
+  let totalGeneratedBytes = 0;
+  let totalChangedPages = 0;
+  let totalUnchangedPages = 0;
+  let recentCompleted = 0;
+
+  for (const job of jobs) {
+    const key = String(job.status || "").toLowerCase();
+
+    if (Object.prototype.hasOwnProperty.call(counts, key)) {
+      counts[key] += 1;
+    }
+
+    if (
+      job.status === "Completed" &&
+      Number(job.durationMs) > 0
+    ) {
+      totalCompletedDurationMs += Number(job.durationMs);
+      completedWithDuration += 1;
+    }
+
+    if (Array.isArray(job.files)) {
+      totalGeneratedFiles += job.files.length;
+
+      for (const file of job.files) {
+        try {
+          if (
+            file?.filePath &&
+            fs.existsSync(file.filePath)
+          ) {
+            totalGeneratedBytes += fs.statSync(
+              file.filePath
+            ).size;
+          }
+        } catch {
+          // Ignore a file removed after publication.
+        }
+      }
+    }
+
+    totalChangedPages += Number(
+      job.incremental?.changedPageNumbers?.length || 0
+    );
+    totalUnchangedPages += Number(
+      job.incremental?.unchangedPageNumbers?.length || 0
+    );
+
+    if (
+      job.status === "Completed" &&
+      job.completedAt &&
+      now - new Date(job.completedAt).getTime() <=
+        24 * 60 * 60 * 1000
+    ) {
+      recentCompleted += 1;
+    }
+  }
+
+  const activeJobs = jobs.filter(
+    (job) =>
+      job.status === "Running" ||
+      job.status === "Queued"
+  );
+  const averageDurationMs =
+    completedWithDuration > 0
+      ? Math.round(
+          totalCompletedDurationMs /
+            completedWithDuration
+        )
+      : 0;
+  const estimatedRemainingMs =
+    averageDurationMs > 0
+      ? Math.ceil(
+          activeJobs.length /
+            Math.max(1, settings.workerCount)
+        ) * averageDurationMs
+      : 0;
+
+  let engineStatus = "Idle";
+
+  if (settings.isPaused) {
+    engineStatus = "Paused";
+  } else if (counts.running > 0) {
+    engineStatus = "Running";
+  } else if (counts.queued > 0) {
+    engineStatus = "Recovering";
+  }
+
+  const recentJobs = [...jobs]
+    .sort(
+      (a, b) =>
+        new Date(b.createdAt || 0).getTime() -
+        new Date(a.createdAt || 0).getTime()
+    )
+    .slice(0, 20)
+    .map((job) => ({
+      id: job.id,
+      documentName: job.documentName,
+      status: job.status,
+      progress: Number(job.progress || 0),
+      durationMs: Number(job.durationMs || 0),
+      createdAt: job.createdAt,
+      completedAt: job.completedAt,
+      files: Array.isArray(job.files)
+        ? job.files.length
+        : 0,
+      error: job.error || null,
+    }));
+
+  return {
+    generatedAt: new Date().toISOString(),
+    engineStatus,
+    settings,
+    counts,
+    averageDurationMs,
+    estimatedRemainingMs,
+    totalGeneratedFiles,
+    totalGeneratedBytes,
+    recentCompleted,
+    totalChangedPages,
+    totalUnchangedPages,
+    workerUtilizationPercent:
+      settings.workerCount > 0
+        ? Math.min(
+            100,
+            Math.round(
+              (counts.running /
+                settings.workerCount) *
+                100
+            )
+          )
+        : 0,
+    recentJobs,
+  };
+}
+
+function selfHealPublicationQueue(projectPath) {
+  if (!projectPath) return;
+
+  const settings = readPublicationSettings(projectPath);
+
+  if (settings.isPaused) return;
+
+  const jobs = readPublicationQueue(projectPath);
+  let changed = false;
+
+  for (const job of jobs) {
+    if (
+      job.status === "Running" &&
+      !activePublicationJobs.has(job.id)
+    ) {
+      job.status = "Queued";
+      job.progress = 0;
+      job.message =
+        "Recovered by queue watchdog.";
+      job.startedAt = null;
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    savePublicationQueue(projectPath, jobs);
+  }
+
+  if (
+    jobs.some((job) => job.status === "Queued") &&
+    !activePublicationQueueProjects.has(projectPath)
+  ) {
+    void processPublicationQueue(projectPath);
+  }
+}
+
+ipcMain.handle("publish:getDashboard", async (_, data) => {
+  const projectPath = data?.projectPath;
+
+  if (!projectPath) {
+    return {
+      success: false,
+      message: "Project path is required.",
+      dashboard: null,
+    };
+  }
+
+  selfHealPublicationQueue(projectPath);
+
+  return {
+    success: true,
+    message: "Publishing dashboard refreshed.",
+    dashboard: calculatePublicationDashboard(
+      projectPath
+    ),
+  };
+});
+
+ipcMain.handle("publish:exportAuditLog", async (_, data) => {
+  const projectPath = data?.projectPath;
+
+  if (!projectPath) {
+    return {
+      success: false,
+      message: "Project path is required.",
+      filePath: null,
+    };
+  }
+
+  const folder = path.join(
+    projectPath,
+    "Export",
+    "Published",
+    "Audit"
+  );
+  fs.mkdirSync(folder, { recursive: true });
+
+  const timestamp = new Date()
+    .toISOString()
+    .replace(/[:.]/g, "-");
+  const filePath = path.join(
+    folder,
+    `publishing-audit-${timestamp}.json`
+  );
+
+  fs.writeFileSync(
+    filePath,
+    JSON.stringify(
+      {
+        generatedAt: new Date().toISOString(),
+        dashboard:
+          calculatePublicationDashboard(projectPath),
+        settings: readPublicationSettings(projectPath),
+        queue: readPublicationQueue(projectPath),
+        publicationHistory:
+          readPublishHistory(projectPath),
+        profiles:
+          readPublicationProfiles(projectPath),
+      },
+      null,
+      2
+    ),
+    "utf-8"
+  );
+
+  return {
+    success: true,
+    message: "Publishing audit log exported.",
+    filePath,
+  };
+});
+
 ipcMain.handle("publish:listQueue", async (_, data) => {
   const projectPath = data?.projectPath;
 
   if (!projectPath) return [];
+
+  selfHealPublicationQueue(projectPath);
 
   return readPublicationQueue(projectPath).sort(
     (a, b) =>

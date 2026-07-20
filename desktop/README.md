@@ -1,6 +1,6 @@
-# OCR Studio Phase 6D.3 — Publishing Queue, Profiles, and Multi-Format Export
+# OCR Studio Phase 6E.1 — Collaborative Review Workflow
 
-This package includes all Phase 6D.1 and Phase 6D.2 functionality.
+This package includes all functionality from Phase 6D.1 through Phase 6D.5.
 
 ## Replace
 
@@ -20,76 +20,134 @@ npm run dev
 
 ## Added
 
-### Publication profiles
+### Review team
 
-Save the current publication settings as named profiles such as:
+Create local review participants with roles such as:
 
-- Archive
-- Web
-- AI Training
-- Research
-- Digital Edition
+- Reviewer
+- Senior Reviewer
+- Language Expert
+- Editor
+- Administrator
 
-Profiles include word-inclusion rules and all selected export formats.
+Reviewers can be activated or deactivated without deleting their history.
 
-Profiles persist in:
+### Review assignments
+
+Assign the currently selected document to a reviewer.
+
+Supported scopes:
+
+- Entire document
+- Page range
+
+Priorities:
+
+- Low
+- Normal
+- High
+- Urgent
+
+Assignment states:
+
+- Assigned
+- In Progress
+- Blocked
+- Completed
+
+Starting and completion timestamps are recorded automatically.
+
+### Page and word comments
+
+Add comments against:
+
+- the selected document
+- the current review page
+- the currently selected OCR word, when one is selected
+
+Comments support:
+
+- author
+- timestamp
+- open/resolved status
+- resolved-by information
+- reopening after resolution
+
+### Collaboration activity trail
+
+OCR Studio records activities such as:
+
+- reviewer creation
+- reviewer activation/deactivation
+- assignment creation
+- assignment status changes
+- comment creation
+- comment resolution
+- comment reopening
+
+The latest activity is shown inside the Review workspace.
+
+### Collaboration dashboard
+
+The panel displays:
+
+- active reviewers
+- open assignments
+- unresolved comments
+- completed assignments
+
+### Persistence
+
+All collaboration data is stored locally in:
 
 ```text
-ocr-word-index/publication-profiles.json
+ocr-word-index/review-collaboration.json
 ```
 
-### Persistent publishing queue
+No cloud account or server is required.
 
-- select multiple indexed documents
-- add them to one queue
-- sequential background processing
-- persistent status across app restarts
-- progress display
-- cancel queued or running jobs
-- retry failed or cancelled jobs
-- remove completed jobs
-- resume pending jobs after restart
-- open completed output folders
+### Review report export
 
-Queue state persists in:
+Click `Export report` to create:
 
 ```text
-ocr-word-index/publication-queue.json
+Export/
+  Review/
+    collaborative-review-<timestamp>.json
 ```
 
-### Additional formats
+The report contains:
 
-In addition to TXT, JSON, CSV, HTML, searchable PDF, and review reports:
-
-- TSV
-- Markdown
-- hOCR
-- ALTO XML 4
-- PAGE XML 2019
-
-These formats include corrected text, confidence, page numbers, word IDs, and
-bounding-box coordinates where applicable.
+- reviewer roster
+- assignments
+- comments
+- activity trail
+- summary counts
+- timestamps and statuses
 
 ## Test
 
 1. Open the Review workspace.
-2. Select output formats including one of TSV, Markdown, hOCR, ALTO XML, or PAGE XML.
-3. Enter a profile name and click `Save current options`.
-4. Click `Load profiles`.
-5. Select the profile and confirm its options are restored.
-6. Under Publishing Queue, select two indexed documents.
-7. Click `Add 2 to queue`.
-8. Click `Refresh queue` while jobs are running.
-9. Confirm each job becomes Completed.
-10. Open each output folder.
-11. Confirm all selected formats were generated.
-12. Queue another job and cancel it.
-13. Retry the cancelled job.
-14. Restart OCR Studio and click `Resume queue`.
-15. Confirm profiles and queue history remain available.
+2. Add two reviewers with different roles.
+3. Deactivate and reactivate one reviewer.
+4. Select a document.
+5. Assign the entire document to one reviewer.
+6. Create a page-range assignment for the second reviewer.
+7. Change one assignment to `In Progress`.
+8. Change another assignment to `Completed`.
+9. Navigate to a page and optionally select a word.
+10. Enter your name and add a review comment.
+11. Resolve the comment.
+12. Reopen the comment.
+13. Confirm the summary counters update.
+14. Confirm recent activity records each action.
+15. Click `Export report`.
+16. Open the generated JSON file.
+17. Restart OCR Studio and confirm reviewers, assignments, comments, and history remain available.
 
 ## Scope
 
-This milestone uses a persistent sequential queue. That is intentional for
-stability when publishing large books. True parallel worker limits and
-incremental page-only regeneration are planned for the next performance phase.
+This phase provides collaborative workflow and auditability on a shared local
+project folder. Real-time multi-computer synchronization, user authentication,
+and conflict resolution require a server-backed collaboration phase and are not
+included yet.

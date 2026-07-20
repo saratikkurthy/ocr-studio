@@ -52,6 +52,91 @@ type DocumentWordResult = OcrIndexedWord & {
     sourceFile: string;
 };
 
+type ReviewCollaboration = {
+    version: number;
+    reviewers: Array<{
+        id: string;
+        name: string;
+        role: string;
+        isActive: boolean;
+        createdAt: string;
+        updatedAt: string;
+    }>;
+    assignments: Array<{
+        id: string;
+        documentId: number;
+        documentName: string;
+        reviewerId: string;
+        reviewerName: string;
+        scope: "document" | "pages";
+        pageStart: number | null;
+        pageEnd: number | null;
+        priority: string;
+        note: string;
+        status: string;
+        createdAt: string;
+        startedAt: string | null;
+        completedAt: string | null;
+        updatedAt: string;
+    }>;
+    comments: Array<{
+        id: string;
+        documentId: number;
+        documentName: string;
+        pageNumber: number | null;
+        wordId: string | null;
+        author: string;
+        text: string;
+        status: string;
+        createdAt: string;
+        resolvedAt: string | null;
+        resolvedBy: string | null;
+    }>;
+    activity: Array<{
+        id: string;
+        action: string;
+        details: string;
+        createdAt: string;
+    }>;
+    updatedAt: string | null;
+};
+
+type PublicationDashboard = {
+    generatedAt: string;
+    engineStatus: "Idle" | "Running" | "Paused" | "Recovering";
+    settings: {
+        workerCount: number;
+        isPaused: boolean;
+    };
+    counts: {
+        total: number;
+        queued: number;
+        running: number;
+        completed: number;
+        failed: number;
+        cancelled: number;
+    };
+    averageDurationMs: number;
+    estimatedRemainingMs: number;
+    totalGeneratedFiles: number;
+    totalGeneratedBytes: number;
+    recentCompleted: number;
+    totalChangedPages: number;
+    totalUnchangedPages: number;
+    workerUtilizationPercent: number;
+    recentJobs: Array<{
+        id: string;
+        documentName: string;
+        status: string;
+        progress: number;
+        durationMs: number;
+        createdAt: string;
+        completedAt: string | null;
+        files: number;
+        error: string | null;
+    }>;
+};
+
 type PublicationProfile = {
     id: string;
     name: string;
@@ -829,6 +914,39 @@ export default function ReviewTab({
         useState(2);
     const [publicationQueuePaused, setPublicationQueuePaused] =
         useState(false);
+    const [reviewCollaboration, setReviewCollaboration] =
+        useState<ReviewCollaboration | null>(null);
+    const [reviewerName, setReviewerName] = useState("");
+    const [reviewerRole, setReviewerRole] =
+        useState("Reviewer");
+    const [assignmentReviewerId, setAssignmentReviewerId] =
+        useState("");
+    const [assignmentScope, setAssignmentScope] =
+        useState<"document" | "pages">("document");
+    const [assignmentPageStart, setAssignmentPageStart] =
+        useState(1);
+    const [assignmentPageEnd, setAssignmentPageEnd] =
+        useState(1);
+    const [assignmentPriority, setAssignmentPriority] =
+        useState("Normal");
+    const [assignmentNote, setAssignmentNote] =
+        useState("");
+    const [commentAuthor, setCommentAuthor] =
+        useState("");
+    const [reviewCommentText, setReviewCommentText] =
+        useState("");
+    const [reviewCollaborationMessage, setReviewCollaborationMessage] =
+        useState("");
+    const [reviewCollaborationReportPath, setReviewCollaborationReportPath] =
+        useState<string | null>(null);
+
+    const [publicationDashboard, setPublicationDashboard] =
+        useState<PublicationDashboard | null>(null);
+    const [publicationDashboardLoading, setPublicationDashboardLoading] =
+        useState(false);
+    const [publicationAuditPath, setPublicationAuditPath] =
+        useState<string | null>(null);
+
     const [incrementalPreview, setIncrementalPreview] =
         useState<{
             hasPreviousSnapshot: boolean;
@@ -837,6 +955,21 @@ export default function ReviewTab({
             previousPublishedAt: string | null;
             totalPages: number;
         } | null>(null);
+
+    useEffect(() => {
+        void loadPublicationDashboard(true);
+        void loadPublicationQueue();
+        void loadReviewCollaboration();
+
+        const timer = window.setInterval(() => {
+            void loadPublicationDashboard(true);
+            void loadPublicationQueue();
+        }, 3000);
+
+        return () => {
+            window.clearInterval(timer);
+        };
+    }, [projectPath]);
 
     useEffect(() => {
         if (
@@ -1185,6 +1318,285 @@ export default function ReviewTab({
         setSelectedWordId(word.id);
         setPendingDocumentWordId(null);
     }, [pendingDocumentWordId, wordIndexPage]);
+
+    const loadReviewCollaboration = async () => {
+        try {
+            const result =
+                await window.ocrStudio.getReviewCollaboration({
+                    projectPath,
+                });
+
+            if (result.success && result.state) {
+                setReviewCollaboration(result.state);
+
+                if (
+                    !assignmentReviewerId &&
+                    result.state.reviewers.length > 0
+                ) {
+                    const firstActive =
+                        result.state.reviewers.find(
+                            (reviewer) =>
+                                reviewer.isActive
+                        );
+                    setAssignmentReviewerId(
+                        firstActive?.id || ""
+                    );
+                }
+            }
+
+            setReviewCollaborationMessage(result.message);
+        } catch (error) {
+            setReviewCollaborationMessage(
+                error instanceof Error
+                    ? error.message
+                    : "Could not load collaborative review."
+            );
+        }
+    };
+
+    const addReviewCollaborator = async () => {
+        if (!reviewerName.trim()) {
+            setReviewCollaborationMessage(
+                "Enter the reviewer name."
+            );
+            return;
+        }
+
+        const result =
+            await window.ocrStudio.addReviewCollaborator({
+                projectPath,
+                name: reviewerName,
+                role: reviewerRole,
+            });
+
+        if (result.state) {
+            setReviewCollaboration(result.state);
+        }
+
+        setReviewCollaborationMessage(result.message);
+        setReviewerName("");
+    };
+
+    const toggleReviewCollaborator = async (
+        reviewerId: string
+    ) => {
+        const result =
+            await window.ocrStudio.toggleReviewCollaborator({
+                projectPath,
+                reviewerId,
+            });
+
+        if (result.state) {
+            setReviewCollaboration(result.state);
+        }
+
+        setReviewCollaborationMessage(result.message);
+    };
+
+    const createReviewAssignment = async () => {
+        if (
+            selectedDocumentId === null ||
+            !selectedDocument ||
+            !assignmentReviewerId
+        ) {
+            setReviewCollaborationMessage(
+                "Select a document and reviewer."
+            );
+            return;
+        }
+
+        const result =
+            await window.ocrStudio.createReviewAssignment({
+                projectPath,
+                documentId: selectedDocumentId,
+                documentName:
+                    selectedDocument.fileName ||
+                    `Document ${selectedDocumentId}`,
+                reviewerId: assignmentReviewerId,
+                scope: assignmentScope,
+                pageStart: assignmentPageStart,
+                pageEnd: assignmentPageEnd,
+                priority: assignmentPriority,
+                note: assignmentNote,
+            });
+
+        if (result.state) {
+            setReviewCollaboration(result.state);
+        }
+
+        setReviewCollaborationMessage(result.message);
+        setAssignmentNote("");
+    };
+
+    const updateReviewAssignment = async (
+        assignmentId: string,
+        status: string
+    ) => {
+        const result =
+            await window.ocrStudio.updateReviewAssignment({
+                projectPath,
+                assignmentId,
+                status,
+            });
+
+        if (result.state) {
+            setReviewCollaboration(result.state);
+        }
+
+        setReviewCollaborationMessage(result.message);
+    };
+
+    const addReviewComment = async () => {
+        if (
+            selectedDocumentId === null ||
+            !selectedDocument ||
+            !commentAuthor.trim() ||
+            !reviewCommentText.trim()
+        ) {
+            setReviewCollaborationMessage(
+                "Enter the comment author and comment."
+            );
+            return;
+        }
+
+        const result =
+            await window.ocrStudio.addReviewComment({
+                projectPath,
+                documentId: selectedDocumentId,
+                documentName:
+                    selectedDocument.fileName ||
+                    `Document ${selectedDocumentId}`,
+                pageNumber: sharedPage,
+                wordId: selectedWordId,
+                author: commentAuthor,
+                text: reviewCommentText,
+            });
+
+        if (result.state) {
+            setReviewCollaboration(result.state);
+        }
+
+        setReviewCollaborationMessage(result.message);
+        setReviewCommentText("");
+    };
+
+    const resolveReviewComment = async (
+        commentId: string
+    ) => {
+        const result =
+            await window.ocrStudio.resolveReviewComment({
+                projectPath,
+                commentId,
+                resolvedBy:
+                    commentAuthor.trim() || "Reviewer",
+            });
+
+        if (result.state) {
+            setReviewCollaboration(result.state);
+        }
+
+        setReviewCollaborationMessage(result.message);
+    };
+
+    const exportReviewCollaborationReport = async () => {
+        const result =
+            await window.ocrStudio.exportReviewCollaborationReport({
+                projectPath,
+            });
+
+        setReviewCollaborationMessage(result.message);
+        setReviewCollaborationReportPath(result.filePath);
+    };
+
+    const formatDuration = (milliseconds: number) => {
+        if (!milliseconds || milliseconds < 1) {
+            return "—";
+        }
+
+        const totalSeconds = Math.round(milliseconds / 1000);
+
+        if (totalSeconds < 60) {
+            return `${totalSeconds}s`;
+        }
+
+        const minutes = Math.floor(totalSeconds / 60);
+        const seconds = totalSeconds % 60;
+
+        if (minutes < 60) {
+            return `${minutes}m ${seconds}s`;
+        }
+
+        const hours = Math.floor(minutes / 60);
+        return `${hours}h ${minutes % 60}m`;
+    };
+
+    const formatFileSize = (bytes: number) => {
+        if (!bytes || bytes < 1) return "0 B";
+
+        const units = ["B", "KB", "MB", "GB"];
+        const index = Math.min(
+            units.length - 1,
+            Math.floor(Math.log(bytes) / Math.log(1024))
+        );
+        const value = bytes / 1024 ** index;
+
+        return `${value.toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
+    };
+
+    const loadPublicationDashboard = async (
+        quiet = false
+    ) => {
+        if (!quiet) {
+            setPublicationDashboardLoading(true);
+        }
+
+        try {
+            const result =
+                await window.ocrStudio.getPublicationDashboard({
+                    projectPath,
+                });
+
+            if (result.success && result.dashboard) {
+                setPublicationDashboard(result.dashboard);
+                setPublicationWorkerCount(
+                    result.dashboard.settings.workerCount
+                );
+                setPublicationQueuePaused(
+                    result.dashboard.settings.isPaused
+                );
+            }
+        } catch (error) {
+            if (!quiet) {
+                setPublicationQueueMessage(
+                    error instanceof Error
+                        ? error.message
+                        : "Could not load publishing dashboard."
+                );
+            }
+        } finally {
+            if (!quiet) {
+                setPublicationDashboardLoading(false);
+            }
+        }
+    };
+
+    const exportPublicationAuditLog = async () => {
+        try {
+            const result =
+                await window.ocrStudio.exportPublicationAuditLog({
+                    projectPath,
+                });
+
+            setPublicationQueueMessage(result.message);
+            setPublicationAuditPath(result.filePath);
+        } catch (error) {
+            setPublicationQueueMessage(
+                error instanceof Error
+                    ? error.message
+                    : "Could not export the audit log."
+            );
+        }
+    };
 
     const loadPublicationSettings = async () => {
         try {
@@ -2551,6 +2963,486 @@ export default function ReviewTab({
                     )}
             </section>
 
+            <section className="collaborative-review-panel">
+                <div className="collaborative-review-header">
+                    <div>
+                        <span className="eyebrow">
+                            Collaborative review
+                        </span>
+                        <strong>
+                            Reviewers, assignments, comments, and audit activity
+                        </strong>
+                        <small>
+                            Coordinate document or page-range review while
+                            preserving a complete local activity history.
+                        </small>
+                    </div>
+
+                    <div>
+                        <button
+                            type="button"
+                            className="small-button"
+                            onClick={() =>
+                                void loadReviewCollaboration()
+                            }
+                        >
+                            Refresh
+                        </button>
+
+                        <button
+                            type="button"
+                            className="small-button"
+                            onClick={() =>
+                                void exportReviewCollaborationReport()
+                            }
+                        >
+                            Export report
+                        </button>
+                    </div>
+                </div>
+
+                <div className="collaboration-summary-grid">
+                    <article>
+                        <span>Reviewers</span>
+                        <strong>
+                            {reviewCollaboration?.reviewers.filter(
+                                (reviewer) => reviewer.isActive
+                            ).length || 0}
+                        </strong>
+                        <small>active contributors</small>
+                    </article>
+                    <article>
+                        <span>Assignments</span>
+                        <strong>
+                            {reviewCollaboration?.assignments.filter(
+                                (assignment) =>
+                                    assignment.status !== "Completed"
+                            ).length || 0}
+                        </strong>
+                        <small>open assignments</small>
+                    </article>
+                    <article>
+                        <span>Comments</span>
+                        <strong>
+                            {reviewCollaboration?.comments.filter(
+                                (comment) =>
+                                    comment.status === "Open"
+                            ).length || 0}
+                        </strong>
+                        <small>unresolved discussions</small>
+                    </article>
+                    <article>
+                        <span>Completed</span>
+                        <strong>
+                            {reviewCollaboration?.assignments.filter(
+                                (assignment) =>
+                                    assignment.status === "Completed"
+                            ).length || 0}
+                        </strong>
+                        <small>review assignments</small>
+                    </article>
+                </div>
+
+                <div className="collaboration-workspace-grid">
+                    <div className="collaboration-card">
+                        <div className="collaboration-card-header">
+                            <strong>Review team</strong>
+                            <small>Add local reviewers and roles</small>
+                        </div>
+
+                        <div className="collaboration-form-row">
+                            <input
+                                value={reviewerName}
+                                placeholder="Reviewer name"
+                                onChange={(event) =>
+                                    setReviewerName(
+                                        event.target.value
+                                    )
+                                }
+                            />
+                            <select
+                                value={reviewerRole}
+                                onChange={(event) =>
+                                    setReviewerRole(
+                                        event.target.value
+                                    )
+                                }
+                            >
+                                <option>Reviewer</option>
+                                <option>Senior Reviewer</option>
+                                <option>Language Expert</option>
+                                <option>Editor</option>
+                                <option>Administrator</option>
+                            </select>
+                            <button
+                                type="button"
+                                className="small-button primary"
+                                onClick={() =>
+                                    void addReviewCollaborator()
+                                }
+                            >
+                                Add reviewer
+                            </button>
+                        </div>
+
+                        <div className="reviewer-list">
+                            {reviewCollaboration?.reviewers.map(
+                                (reviewer) => (
+                                    <article key={reviewer.id}>
+                                        <div>
+                                            <strong>
+                                                {reviewer.name}
+                                            </strong>
+                                            <small>
+                                                {reviewer.role} ·{" "}
+                                                {reviewer.isActive
+                                                    ? "Active"
+                                                    : "Inactive"}
+                                            </small>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            className="small-button"
+                                            onClick={() =>
+                                                void toggleReviewCollaborator(
+                                                    reviewer.id
+                                                )
+                                            }
+                                        >
+                                            {reviewer.isActive
+                                                ? "Deactivate"
+                                                : "Activate"}
+                                        </button>
+                                    </article>
+                                )
+                            )}
+                        </div>
+                    </div>
+
+                    <div className="collaboration-card">
+                        <div className="collaboration-card-header">
+                            <strong>Create assignment</strong>
+                            <small>
+                                Assign the selected document or page range
+                            </small>
+                        </div>
+
+                        <div className="assignment-form-grid">
+                            <select
+                                value={assignmentReviewerId}
+                                onChange={(event) =>
+                                    setAssignmentReviewerId(
+                                        event.target.value
+                                    )
+                                }
+                            >
+                                <option value="">
+                                    Select reviewer
+                                </option>
+                                {reviewCollaboration?.reviewers
+                                    .filter(
+                                        (reviewer) =>
+                                            reviewer.isActive
+                                    )
+                                    .map((reviewer) => (
+                                        <option
+                                            key={reviewer.id}
+                                            value={reviewer.id}
+                                        >
+                                            {reviewer.name} —{" "}
+                                            {reviewer.role}
+                                        </option>
+                                    ))}
+                            </select>
+
+                            <select
+                                value={assignmentScope}
+                                onChange={(event) =>
+                                    setAssignmentScope(
+                                        event.target.value as
+                                            | "document"
+                                            | "pages"
+                                    )
+                                }
+                            >
+                                <option value="document">
+                                    Entire document
+                                </option>
+                                <option value="pages">
+                                    Page range
+                                </option>
+                            </select>
+
+                            <select
+                                value={assignmentPriority}
+                                onChange={(event) =>
+                                    setAssignmentPriority(
+                                        event.target.value
+                                    )
+                                }
+                            >
+                                <option>Low</option>
+                                <option>Normal</option>
+                                <option>High</option>
+                                <option>Urgent</option>
+                            </select>
+
+                            {assignmentScope === "pages" && (
+                                <>
+                                    <input
+                                        type="number"
+                                        min={1}
+                                        value={assignmentPageStart}
+                                        onChange={(event) =>
+                                            setAssignmentPageStart(
+                                                Math.max(
+                                                    1,
+                                                    Number(
+                                                        event.target.value
+                                                    )
+                                                )
+                                            )
+                                        }
+                                        placeholder="Start page"
+                                    />
+                                    <input
+                                        type="number"
+                                        min={assignmentPageStart}
+                                        value={assignmentPageEnd}
+                                        onChange={(event) =>
+                                            setAssignmentPageEnd(
+                                                Math.max(
+                                                    assignmentPageStart,
+                                                    Number(
+                                                        event.target.value
+                                                    )
+                                                )
+                                            )
+                                        }
+                                        placeholder="End page"
+                                    />
+                                </>
+                            )}
+
+                            <input
+                                value={assignmentNote}
+                                placeholder="Assignment instructions"
+                                onChange={(event) =>
+                                    setAssignmentNote(
+                                        event.target.value
+                                    )
+                                }
+                            />
+
+                            <button
+                                type="button"
+                                className="small-button primary"
+                                onClick={() =>
+                                    void createReviewAssignment()
+                                }
+                            >
+                                Assign review
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="collaboration-lists-grid">
+                    <div className="collaboration-card">
+                        <div className="collaboration-card-header">
+                            <strong>Assignments</strong>
+                            <small>Track review progress</small>
+                        </div>
+
+                        <div className="assignment-list">
+                            {reviewCollaboration?.assignments
+                                .slice()
+                                .reverse()
+                                .map((assignment) => (
+                                    <article key={assignment.id}>
+                                        <div>
+                                            <strong>
+                                                {assignment.documentName}
+                                            </strong>
+                                            <small>
+                                                {assignment.reviewerName} ·{" "}
+                                                {assignment.scope ===
+                                                "pages"
+                                                    ? `Pages ${assignment.pageStart}-${assignment.pageEnd}`
+                                                    : "Entire document"}{" "}
+                                                · {assignment.priority}
+                                            </small>
+                                            {assignment.note && (
+                                                <p>
+                                                    {assignment.note}
+                                                </p>
+                                            )}
+                                        </div>
+
+                                        <select
+                                            value={assignment.status}
+                                            onChange={(event) =>
+                                                void updateReviewAssignment(
+                                                    assignment.id,
+                                                    event.target.value
+                                                )
+                                            }
+                                        >
+                                            <option>Assigned</option>
+                                            <option>In Progress</option>
+                                            <option>Blocked</option>
+                                            <option>Completed</option>
+                                        </select>
+                                    </article>
+                                ))}
+                        </div>
+                    </div>
+
+                    <div className="collaboration-card">
+                        <div className="collaboration-card-header">
+                            <strong>Review comments</strong>
+                            <small>
+                                Current page {sharedPage}
+                                {selectedWordId
+                                    ? ` · Word ${selectedWordId}`
+                                    : ""}
+                            </small>
+                        </div>
+
+                        <div className="comment-compose">
+                            <input
+                                value={commentAuthor}
+                                placeholder="Your name"
+                                onChange={(event) =>
+                                    setCommentAuthor(
+                                        event.target.value
+                                    )
+                                }
+                            />
+                            <textarea
+                                value={reviewCommentText}
+                                placeholder="Add a review comment..."
+                                onChange={(event) =>
+                                    setReviewCommentText(
+                                        event.target.value
+                                    )
+                                }
+                            />
+                            <button
+                                type="button"
+                                className="small-button primary"
+                                onClick={() =>
+                                    void addReviewComment()
+                                }
+                            >
+                                Add comment
+                            </button>
+                        </div>
+
+                        <div className="review-comment-list">
+                            {reviewCollaboration?.comments
+                                .filter(
+                                    (comment) =>
+                                        selectedDocumentId === null ||
+                                        comment.documentId ===
+                                            selectedDocumentId
+                                )
+                                .slice()
+                                .reverse()
+                                .map((comment) => (
+                                    <article
+                                        key={comment.id}
+                                        className={
+                                            comment.status ===
+                                            "Resolved"
+                                                ? "resolved"
+                                                : ""
+                                        }
+                                    >
+                                        <div>
+                                            <strong>
+                                                {comment.author}
+                                            </strong>
+                                            <small>
+                                                Page{" "}
+                                                {comment.pageNumber ||
+                                                    "Document"}
+                                                {comment.wordId
+                                                    ? ` · ${comment.wordId}`
+                                                    : ""}{" "}
+                                                ·{" "}
+                                                {new Date(
+                                                    comment.createdAt
+                                                ).toLocaleString()}
+                                            </small>
+                                            <p>{comment.text}</p>
+                                        </div>
+
+                                        <button
+                                            type="button"
+                                            className="small-button"
+                                            onClick={() =>
+                                                void resolveReviewComment(
+                                                    comment.id
+                                                )
+                                            }
+                                        >
+                                            {comment.status ===
+                                            "Resolved"
+                                                ? "Reopen"
+                                                : "Resolve"}
+                                        </button>
+                                    </article>
+                                ))}
+                        </div>
+                    </div>
+                </div>
+
+                {reviewCollaboration?.activity.length ? (
+                    <div className="collaboration-activity">
+                        <strong>Recent review activity</strong>
+                        {reviewCollaboration.activity
+                            .slice(-8)
+                            .reverse()
+                            .map((activity) => (
+                                <article key={activity.id}>
+                                    <span>{activity.details}</span>
+                                    <small>
+                                        {new Date(
+                                            activity.createdAt
+                                        ).toLocaleString()}
+                                    </small>
+                                </article>
+                            ))}
+                    </div>
+                ) : null}
+
+                {reviewCollaborationMessage && (
+                    <div className="collaboration-message">
+                        {reviewCollaborationMessage}
+                    </div>
+                )}
+
+                {reviewCollaborationReportPath && (
+                    <div className="collaboration-report-result">
+                        <span>
+                            Collaborative review report is ready.
+                        </span>
+                        <button
+                            type="button"
+                            className="small-button primary"
+                            onClick={() =>
+                                onOpen(
+                                    reviewCollaborationReportPath
+                                )
+                            }
+                        >
+                            Open report
+                        </button>
+                    </div>
+                )}
+            </section>
+
             <section className="publish-corrections-panel">
                 <div className="publish-panel-header">
                     <div>
@@ -2971,6 +3863,262 @@ export default function ReviewTab({
                                 Resume queue
                             </button>
                         </div>
+                    </div>
+
+                    <div className="publishing-dashboard">
+                        <div className="publishing-dashboard-header">
+                            <div>
+                                <span className="eyebrow">
+                                    Publishing dashboard
+                                </span>
+                                <strong>
+                                    Queue health and production analytics
+                                </strong>
+                                <small>
+                                    Auto-refreshes every three seconds and
+                                    self-recovers stalled queued jobs.
+                                </small>
+                            </div>
+
+                            <div>
+                                <span
+                                    className={`queue-engine-status ${(
+                                        publicationDashboard?.engineStatus ||
+                                        "Idle"
+                                    ).toLowerCase()}`}
+                                >
+                                    Queue Engine:{" "}
+                                    {publicationDashboard?.engineStatus ||
+                                        "Idle"}
+                                </span>
+
+                                <button
+                                    type="button"
+                                    className="small-button"
+                                    disabled={
+                                        publicationDashboardLoading
+                                    }
+                                    onClick={() =>
+                                        void loadPublicationDashboard()
+                                    }
+                                >
+                                    {publicationDashboardLoading
+                                        ? "Refreshing..."
+                                        : "Refresh analytics"}
+                                </button>
+
+                                <button
+                                    type="button"
+                                    className="small-button"
+                                    onClick={() =>
+                                        void exportPublicationAuditLog()
+                                    }
+                                >
+                                    Export audit log
+                                </button>
+                            </div>
+                        </div>
+
+                        {publicationDashboard && (
+                            <>
+                                <div className="publishing-kpi-grid">
+                                    <article>
+                                        <span>Running</span>
+                                        <strong>
+                                            {
+                                                publicationDashboard.counts
+                                                    .running
+                                            }
+                                        </strong>
+                                        <small>
+                                            {
+                                                publicationDashboard
+                                                    .workerUtilizationPercent
+                                            }
+                                            % worker utilization
+                                        </small>
+                                    </article>
+
+                                    <article>
+                                        <span>Queued</span>
+                                        <strong>
+                                            {
+                                                publicationDashboard.counts
+                                                    .queued
+                                            }
+                                        </strong>
+                                        <small>
+                                            ETA{" "}
+                                            {formatDuration(
+                                                publicationDashboard
+                                                    .estimatedRemainingMs
+                                            )}
+                                        </small>
+                                    </article>
+
+                                    <article>
+                                        <span>Completed</span>
+                                        <strong>
+                                            {
+                                                publicationDashboard.counts
+                                                    .completed
+                                            }
+                                        </strong>
+                                        <small>
+                                            {
+                                                publicationDashboard
+                                                    .recentCompleted
+                                            }{" "}
+                                            in the last 24 hours
+                                        </small>
+                                    </article>
+
+                                    <article>
+                                        <span>Failed</span>
+                                        <strong>
+                                            {
+                                                publicationDashboard.counts
+                                                    .failed
+                                            }
+                                        </strong>
+                                        <small>
+                                            {
+                                                publicationDashboard.counts
+                                                    .cancelled
+                                            }{" "}
+                                            cancelled
+                                        </small>
+                                    </article>
+
+                                    <article>
+                                        <span>Average job</span>
+                                        <strong>
+                                            {formatDuration(
+                                                publicationDashboard
+                                                    .averageDurationMs
+                                            )}
+                                        </strong>
+                                        <small>
+                                            based on completed jobs
+                                        </small>
+                                    </article>
+
+                                    <article>
+                                        <span>Generated</span>
+                                        <strong>
+                                            {
+                                                publicationDashboard
+                                                    .totalGeneratedFiles
+                                            }
+                                        </strong>
+                                        <small>
+                                            {formatFileSize(
+                                                publicationDashboard
+                                                    .totalGeneratedBytes
+                                            )}{" "}
+                                            on disk
+                                        </small>
+                                    </article>
+
+                                    <article>
+                                        <span>Changed pages</span>
+                                        <strong>
+                                            {
+                                                publicationDashboard
+                                                    .totalChangedPages
+                                            }
+                                        </strong>
+                                        <small>
+                                            incremental publications
+                                        </small>
+                                    </article>
+
+                                    <article>
+                                        <span>Skipped pages</span>
+                                        <strong>
+                                            {
+                                                publicationDashboard
+                                                    .totalUnchangedPages
+                                            }
+                                        </strong>
+                                        <small>
+                                            unchanged pages reused
+                                        </small>
+                                    </article>
+                                </div>
+
+                                <div className="worker-utilization-meter">
+                                    <div>
+                                        <span>Worker utilization</span>
+                                        <strong>
+                                            {
+                                                publicationDashboard
+                                                    .workerUtilizationPercent
+                                            }
+                                            %
+                                        </strong>
+                                    </div>
+                                    <div className="worker-meter-track">
+                                        <span
+                                            style={{
+                                                width: `${publicationDashboard.workerUtilizationPercent}%`,
+                                            }}
+                                        />
+                                    </div>
+                                </div>
+
+                                {publicationDashboard.recentJobs.length >
+                                    0 && (
+                                    <div className="publishing-recent-jobs">
+                                        <strong>Recent activity</strong>
+
+                                        {publicationDashboard.recentJobs
+                                            .slice(0, 8)
+                                            .map((job) => (
+                                                <article key={job.id}>
+                                                    <div>
+                                                        <strong>
+                                                            {
+                                                                job.documentName
+                                                            }
+                                                        </strong>
+                                                        <small>
+                                                            {job.status} ·{" "}
+                                                            {job.files} file(s)
+                                                        </small>
+                                                    </div>
+
+                                                    <span>
+                                                        {job.status ===
+                                                        "Completed"
+                                                            ? formatDuration(
+                                                                  job.durationMs
+                                                              )
+                                                            : `${job.progress}%`}
+                                                    </span>
+                                                </article>
+                                            ))}
+                                    </div>
+                                )}
+                            </>
+                        )}
+
+                        {publicationAuditPath && (
+                            <div className="audit-export-result">
+                                <span>
+                                    Comprehensive publishing audit is ready.
+                                </span>
+                                <button
+                                    type="button"
+                                    className="small-button primary"
+                                    onClick={() =>
+                                        onOpen(publicationAuditPath)
+                                    }
+                                >
+                                    Open audit log
+                                </button>
+                            </div>
+                        )}
                     </div>
 
                     <div className="publication-performance-controls">

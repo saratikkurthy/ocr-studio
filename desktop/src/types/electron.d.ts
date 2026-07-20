@@ -261,6 +261,55 @@ type OcrResultItem = {
     reductionPercent?: number;
 };
 
+type ReviewCollaborationState = {
+    version: number;
+    reviewers: Array<{
+        id: string;
+        name: string;
+        role: string;
+        isActive: boolean;
+        createdAt: string;
+        updatedAt: string;
+    }>;
+    assignments: Array<{
+        id: string;
+        documentId: number;
+        documentName: string;
+        reviewerId: string;
+        reviewerName: string;
+        scope: "document" | "pages";
+        pageStart: number | null;
+        pageEnd: number | null;
+        priority: string;
+        note: string;
+        status: string;
+        createdAt: string;
+        startedAt: string | null;
+        completedAt: string | null;
+        updatedAt: string;
+    }>;
+    comments: Array<{
+        id: string;
+        documentId: number;
+        documentName: string;
+        pageNumber: number | null;
+        wordId: string | null;
+        author: string;
+        text: string;
+        status: string;
+        createdAt: string;
+        resolvedAt: string | null;
+        resolvedBy: string | null;
+    }>;
+    activity: Array<{
+        id: string;
+        action: string;
+        details: string;
+        createdAt: string;
+    }>;
+    updatedAt: string | null;
+};
+
 declare global {
     interface Window {
         ocrStudio: {
@@ -493,6 +542,141 @@ declare global {
                         height: number;
                     };
                 }>;
+            }>;
+
+            getReviewCollaboration: (data: {
+                projectPath: string;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                state: ReviewCollaborationState | null;
+            }>;
+
+            addReviewCollaborator: (data: {
+                projectPath: string;
+                name: string;
+                role: string;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                state: ReviewCollaborationState | null;
+            }>;
+
+            toggleReviewCollaborator: (data: {
+                projectPath: string;
+                reviewerId: string;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                state: ReviewCollaborationState | null;
+            }>;
+
+            createReviewAssignment: (data: {
+                projectPath: string;
+                documentId: number;
+                documentName: string;
+                reviewerId: string;
+                scope: "document" | "pages";
+                pageStart: number;
+                pageEnd: number;
+                priority: string;
+                note: string;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                state: ReviewCollaborationState | null;
+            }>;
+
+            updateReviewAssignment: (data: {
+                projectPath: string;
+                assignmentId: string;
+                status: string;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                state: ReviewCollaborationState | null;
+            }>;
+
+            addReviewComment: (data: {
+                projectPath: string;
+                documentId: number;
+                documentName: string;
+                pageNumber: number | null;
+                wordId: string | null;
+                author: string;
+                text: string;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                state: ReviewCollaborationState | null;
+            }>;
+
+            resolveReviewComment: (data: {
+                projectPath: string;
+                commentId: string;
+                resolvedBy: string;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                state: ReviewCollaborationState | null;
+            }>;
+
+            exportReviewCollaborationReport: (data: {
+                projectPath: string;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                filePath: string | null;
+            }>;
+
+            getPublicationDashboard: (data: {
+                projectPath: string;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                dashboard: {
+                    generatedAt: string;
+                    engineStatus: "Idle" | "Running" | "Paused" | "Recovering";
+                    settings: {
+                        workerCount: number;
+                        isPaused: boolean;
+                    };
+                    counts: {
+                        total: number;
+                        queued: number;
+                        running: number;
+                        completed: number;
+                        failed: number;
+                        cancelled: number;
+                    };
+                    averageDurationMs: number;
+                    estimatedRemainingMs: number;
+                    totalGeneratedFiles: number;
+                    totalGeneratedBytes: number;
+                    recentCompleted: number;
+                    totalChangedPages: number;
+                    totalUnchangedPages: number;
+                    workerUtilizationPercent: number;
+                    recentJobs: Array<{
+                        id: string;
+                        documentName: string;
+                        status: string;
+                        progress: number;
+                        durationMs: number;
+                        createdAt: string;
+                        completedAt: string | null;
+                        files: number;
+                        error: string | null;
+                    }>;
+                } | null;
+            }>;
+
+            exportPublicationAuditLog: (data: {
+                projectPath: string;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                filePath: string | null;
             }>;
 
             getPublicationSettings: (data: {

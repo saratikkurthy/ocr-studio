@@ -67,6 +67,36 @@ contextBridge.exposeInMainWorld("ocrStudio", {
   applyBatchCorrection: (data) =>
     ipcRenderer.invoke("wordIndex:applyBatchCorrection", data),
 
+  getReviewCollaboration: (data) =>
+    ipcRenderer.invoke("reviewCollab:getState", data),
+
+  addReviewCollaborator: (data) =>
+    ipcRenderer.invoke("reviewCollab:addReviewer", data),
+
+  toggleReviewCollaborator: (data) =>
+    ipcRenderer.invoke("reviewCollab:toggleReviewer", data),
+
+  createReviewAssignment: (data) =>
+    ipcRenderer.invoke("reviewCollab:createAssignment", data),
+
+  updateReviewAssignment: (data) =>
+    ipcRenderer.invoke("reviewCollab:updateAssignment", data),
+
+  addReviewComment: (data) =>
+    ipcRenderer.invoke("reviewCollab:addComment", data),
+
+  resolveReviewComment: (data) =>
+    ipcRenderer.invoke("reviewCollab:resolveComment", data),
+
+  exportReviewCollaborationReport: (data) =>
+    ipcRenderer.invoke("reviewCollab:exportReport", data),
+
+  getPublicationDashboard: (data) =>
+    ipcRenderer.invoke("publish:getDashboard", data),
+
+  exportPublicationAuditLog: (data) =>
+    ipcRenderer.invoke("publish:exportAuditLog", data),
+
   getPublicationSettings: (data) =>
     ipcRenderer.invoke("publish:getSettings", data),
 
