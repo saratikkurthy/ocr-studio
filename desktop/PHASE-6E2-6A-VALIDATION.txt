@@ -1,0 +1,7 @@
+OCR Studio Phase 6E.2.6A validation
+
+PASS: node --check electron/revisionHistoryService.js
+PASS: node --check electron/main.js
+PASS: node --check electron/preload.cjs
+PASS: npx tsc --noEmit
+LIMITATION: npm run build reached the Vite step, but this uploaded archive did not include an installed local Vite executable (vite: not found). TypeScript compilation passed independently.

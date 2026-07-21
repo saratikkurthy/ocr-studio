@@ -99,11 +99,56 @@ function requestJson(urlString, options = {}, body = null) {
   });
 }
 
-function evidenceText(results) {
-  return results.map((item, index) => {
-    const citation = `[${index + 1}] ${item.projectName} > ${item.documentName} > Page ${item.pageNumber}`;
-    return `${citation}\n${item.snippet}`;
-  }).join("\n\n");
+const DEFAULT_REQUEST_TIMEOUT_MS = 300000;
+const DEFAULT_MAX_EVIDENCE_ITEMS = 4;
+const DEFAULT_MAX_EVIDENCE_CHARS = 7000;
+const DEFAULT_MAX_SNIPPET_CHARS = 1400;
+
+function compactWhitespace(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function buildEvidenceBundle(results, options = {}) {
+  const maxItems = Math.min(
+    Math.max(Number(options.maxItems) || DEFAULT_MAX_EVIDENCE_ITEMS, 1),
+    8
+  );
+  const maxChars = Math.min(
+    Math.max(Number(options.maxChars) || DEFAULT_MAX_EVIDENCE_CHARS, 2000),
+    16000
+  );
+  const maxSnippetChars = Math.min(
+    Math.max(Number(options.maxSnippetChars) || DEFAULT_MAX_SNIPPET_CHARS, 400),
+    3000
+  );
+
+  const selected = [];
+  const sections = [];
+  let usedChars = 0;
+
+  for (const item of results.slice(0, maxItems)) {
+    const citation =
+      `[${selected.length + 1}] ${item.projectName} > ${item.documentName} > Page ${item.pageNumber}`;
+    const snippet = compactWhitespace(item.snippet).slice(0, maxSnippetChars);
+    if (!snippet) continue;
+
+    const section = `${citation}\n${snippet}`;
+    const separatorSize = sections.length ? 2 : 0;
+
+    if (sections.length && usedChars + separatorSize + section.length > maxChars) {
+      break;
+    }
+
+    sections.push(section);
+    selected.push(item);
+    usedChars += separatorSize + section.length;
+  }
+
+  return {
+    text: sections.join("\n\n"),
+    evidence: selected,
+    characterCount: usedChars,
+  };
 }
 
 function conversationSummary(conversation) {
@@ -196,30 +241,147 @@ export function registerOllamaAssistantIpc(ipcMain) {
       store.conversations.push(conversation);
     }
 
-    const recentHistory = conversation.messages.slice(-8).map((message) => ({ role: message.role, content: message.content }));
-    const systemPrompt = `You are OCR Studio's private manuscript research assistant. Answer only from the supplied manuscript evidence. Cite claims using bracketed source numbers such as [1] or [2]. Never invent a citation. If the evidence is insufficient, say so clearly. Distinguish direct textual evidence from interpretation. Keep original-language terms intact. Give a focused answer followed by a short Sources section listing the citations used.`;
-    const userPrompt = `Research question:\n${question}\n\nManuscript evidence:\n${evidenceText(search.results)}\n\nCompose a grounded answer with inline citations.`;
+    const recentHistory = conversation.messages
+      .slice(-4)
+      .map((message) => ({
+        role: message.role,
+        content: compactWhitespace(message.content).slice(0, 1200),
+      }));
+
+    const systemPrompt =
+      `You are OCR Studio's private manuscript research assistant. ` +
+      `Answer only from the supplied manuscript evidence. ` +
+      `Cite claims using bracketed source numbers such as [1] or [2]. ` +
+      `Never invent a citation. If the evidence is insufficient, say so clearly. ` +
+      `Distinguish direct textual evidence from interpretation. ` +
+      `Keep original-language terms intact. Give a focused answer followed by a short Sources section.`;
+
+    const requestTimeoutMs = Math.min(
+      Math.max(Number(settings.requestTimeoutMs) || DEFAULT_REQUEST_TIMEOUT_MS, 60000),
+      600000
+    );
+
+    const askOllama = async (evidenceBundle, history) => {
+      const userPrompt =
+        `Research question:\n${question}\n\n` +
+        `Manuscript evidence:\n${evidenceBundle.text}\n\n` +
+        `Compose a grounded answer with inline citations.`;
+
+      const startedAt = Date.now();
+      const response = await requestJson(
+        `${String(settings.endpoint || DEFAULT_ENDPOINT).replace(/\/$/, "")}/api/chat`,
+        { timeout: requestTimeoutMs },
+        {
+          model: settings.model || DEFAULT_MODEL,
+          stream: false,
+          keep_alive: "10m",
+          messages: [
+            { role: "system", content: systemPrompt },
+            ...history,
+            { role: "user", content: userPrompt },
+          ],
+          options: {
+            temperature: Number(settings.temperature ?? 0.2),
+            num_ctx: 4096,
+            num_predict: 700,
+          },
+        }
+      );
+
+      return {
+        answer: String(response?.message?.content || "").trim(),
+        elapsedMs: Date.now() - startedAt,
+        promptCharacters: userPrompt.length + systemPrompt.length,
+      };
+    };
+
+    let evidenceBundle = buildEvidenceBundle(search.results);
+
+    if (!evidenceBundle.evidence.length) {
+      return {
+        success: false,
+        message: "Relevant search results were found, but they contained no usable OCR text.",
+        evidence: [],
+      };
+    }
 
     try {
-      const response = await requestJson(`${String(settings.endpoint || DEFAULT_ENDPOINT).replace(/\/$/, "")}/api/chat`, { timeout: 180000 }, {
-        model: settings.model || DEFAULT_MODEL,
-        stream: false,
-        messages: [{ role: "system", content: systemPrompt }, ...recentHistory, { role: "user", content: userPrompt }],
-        options: { temperature: Number(settings.temperature ?? 0.2) },
-      });
-      const answer = String(response?.message?.content || "").trim();
-      if (!answer) throw new Error("The selected model returned an empty answer.");
-      const userMessage = { id: crypto.randomUUID(), role: "user", content: question, createdAt: now };
-      const assistantMessage = {
-        id: crypto.randomUUID(), role: "assistant", content: answer, createdAt: new Date().toISOString(),
-        model: settings.model, evidence: search.results,
+      let result;
+
+      try {
+        result = await askOllama(evidenceBundle, recentHistory);
+      } catch (firstError) {
+        if (!/timed out/i.test(firstError instanceof Error ? firstError.message : String(firstError))) {
+          throw firstError;
+        }
+
+        evidenceBundle = buildEvidenceBundle(search.results, {
+          maxItems: 2,
+          maxChars: 3500,
+          maxSnippetChars: 1000,
+        });
+
+        result = await askOllama(evidenceBundle, []);
+      }
+
+      if (!result.answer) {
+        throw new Error("The selected model returned an empty answer.");
+      }
+
+      const userMessage = {
+        id: crypto.randomUUID(),
+        role: "user",
+        content: question,
+        createdAt: now,
       };
+
+      const assistantMessage = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: result.answer,
+        createdAt: new Date().toISOString(),
+        model: settings.model,
+        evidence: evidenceBundle.evidence,
+        diagnostics: {
+          elapsedMs: result.elapsedMs,
+          promptCharacters: result.promptCharacters,
+          evidenceCharacters: evidenceBundle.characterCount,
+          evidenceCount: evidenceBundle.evidence.length,
+          timeoutMs: requestTimeoutMs,
+        },
+      };
+
       conversation.messages.push(userMessage, assistantMessage);
       conversation.updatedAt = assistantMessage.createdAt;
       saveStore(workspacePath, store);
-      return { success: true, message: `Answered using ${search.results.length} cited passages.`, conversationId: conversation.id, answer, evidence: search.results, conversation };
+
+      return {
+        success: true,
+        message:
+          `Answered using ${evidenceBundle.evidence.length} cited passage(s) ` +
+          `in ${Math.round(result.elapsedMs / 1000)} seconds.`,
+        conversationId: conversation.id,
+        answer: result.answer,
+        evidence: evidenceBundle.evidence,
+        diagnostics: assistantMessage.diagnostics,
+        conversation,
+      };
     } catch (error) {
-      return { success: false, message: `Ollama could not compose the answer. ${error instanceof Error ? error.message : String(error)}`, evidence: search.results };
+      const detail = error instanceof Error ? error.message : String(error);
+      const timeoutHint = /timed out/i.test(detail)
+        ? " The model did not finish within five minutes. Keep Ollama running, retry after the model is loaded, or use a smaller model."
+        : "";
+
+      return {
+        success: false,
+        message: `Ollama could not compose the answer. ${detail}${timeoutHint}`,
+        evidence: evidenceBundle.evidence,
+        diagnostics: {
+          evidenceCharacters: evidenceBundle.characterCount,
+          evidenceCount: evidenceBundle.evidence.length,
+          timeoutMs: requestTimeoutMs,
+        },
+      };
     }
   });
 }

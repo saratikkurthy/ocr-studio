@@ -1,6 +1,10 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("ocrStudio", {
+  listPageRevisions: (data) => ipcRenderer.invoke("revision:list", data),
+  getPageRevision: (data) => ipcRenderer.invoke("revision:get", data),
+  diffPageRevisions: (data) => ipcRenderer.invoke("revision:diff", data),
+  restorePageRevision: (data) => ipcRenderer.invoke("revision:restore", data),
   listResearchReports: (data) => ipcRenderer.invoke("research:list", data),
   getResearchReport: (data) => ipcRenderer.invoke("research:get", data),
   runResearchCopilot: (data) => ipcRenderer.invoke("research:run", data),

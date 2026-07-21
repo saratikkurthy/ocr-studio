@@ -13,6 +13,7 @@ import { registerWorkspaceIntelligenceIpc } from "./workspaceIntelligenceService
 import { registerManuscriptIndexIpc } from "./manuscriptIndexService.js";
 import { registerOllamaAssistantIpc } from "./ollamaAssistantService.js";
 import { registerResearchCopilotIpc } from "./researchCopilotService.js";
+import { registerRevisionHistoryIpc, createPageRevision } from "./revisionHistoryService.js";
 
 
 protocol.registerSchemesAsPrivileged([
@@ -395,6 +396,7 @@ registerWorkspaceIntelligenceIpc(ipcMain, readRecentProjects);
 registerManuscriptIndexIpc(ipcMain, shell, readRecentProjects);
 registerOllamaAssistantIpc(ipcMain);
 registerResearchCopilotIpc(ipcMain, shell);
+registerRevisionHistoryIpc(ipcMain);
 
 ipcMain.handle("workspace:selectFolder", async () => {
   const result = await dialog.showOpenDialog({
@@ -3122,6 +3124,8 @@ ipcMain.handle("wordIndex:updateWord", async (_, data) => {
     };
   }
 
+  createPageRevision({ projectPath, documentId, pageNumber, page, action: "before-word-review", comment: `Before ${action} on ${wordId}` });
+
   const previousWord = page.words[wordIndex];
   let nextWord = { ...previousWord };
   const now = new Date().toISOString();
@@ -3196,6 +3200,8 @@ ipcMain.handle("wordIndex:updateWord", async (_, data) => {
     JSON.stringify(page, null, 2),
     "utf-8"
   );
+
+  createPageRevision({ projectPath, documentId, pageNumber, page, action: `word-${action}`, comment: `${wordId}: ${previousWord.text} → ${nextWord.correctedText || nextWord.text}` });
 
   appendWordCorrectionHistory(projectPath, {
     id: `word-review-${Date.now()}-${Math.random()

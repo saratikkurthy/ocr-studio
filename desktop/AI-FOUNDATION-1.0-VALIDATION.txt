@@ -1,0 +1,9 @@
+AI Foundation 1.0 validation
+
+PASS node --check electron/manuscriptIndexService.js
+PASS node --check electron/main.js
+PASS node --check electron/preload.cjs
+PASS TypeScript compilation
+PASS Vite production build
+
+Build command: npm run build

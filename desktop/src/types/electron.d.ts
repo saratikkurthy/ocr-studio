@@ -549,6 +549,11 @@ declare global {
                 }) => void
             ) => void;
 
+            listPageRevisions: (data: { projectPath: string; documentId: number; pageNumber: number }) => Promise<{ success: boolean; revisions: Array<{ id: string; documentId: number; pageNumber: number; createdAt: string; action: string; actor: string; comment: string; sourceRevisionId: string | null; pageHash: string; summary: unknown; wordCount: number }> }>;
+            getPageRevision: (data: { projectPath: string; documentId: number; pageNumber: number; revisionId: string }) => Promise<{ success: boolean; message?: string; revision: any | null }>;
+            diffPageRevisions: (data: { projectPath: string; documentId: number; pageNumber: number; leftRevisionId: string; rightRevisionId: string }) => Promise<{ success: boolean; message?: string; diff: { added: number; removed: number; modified: number; changes: Array<any> } | null; left?: any; right?: any }>;
+            restorePageRevision: (data: { projectPath: string; documentId: number; pageNumber: number; revisionId: string; comment?: string }) => Promise<{ success: boolean; message: string; page: OcrWordIndexPage | null }>;
+
             getWordIndexManifest: (data: {
                 projectPath: string;
             }) => Promise<OcrWordIndexManifest>;

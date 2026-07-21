@@ -52,6 +52,19 @@ type DocumentWordResult = OcrIndexedWord & {
     sourceFile: string;
 };
 
+type PageRevisionSummary = {
+    id: string;
+    documentId: number;
+    pageNumber: number;
+    createdAt: string;
+    action: string;
+    actor: string;
+    comment: string;
+    sourceRevisionId: string | null;
+    pageHash: string;
+    wordCount: number;
+};
+
 type ReviewCollaboration = {
     version: number;
     reviewers: Array<{
@@ -809,6 +822,10 @@ export default function ReviewTab({
         useState(false);
     const [wordReviewMessage, setWordReviewMessage] =
         useState("");
+    const [pageRevisions, setPageRevisions] = useState<PageRevisionSummary[]>([]);
+    const [revisionLoading, setRevisionLoading] = useState(false);
+    const [revisionMessage, setRevisionMessage] = useState("");
+    const [revisionDiff, setRevisionDiff] = useState<{ added: number; removed: number; modified: number; changes: Array<any> } | null>(null);
     const [documentSearchQuery, setDocumentSearchQuery] =
         useState("");
     const [documentSearchMode, setDocumentSearchMode] =
@@ -2445,6 +2462,41 @@ export default function ReviewTab({
         );
     };
 
+    const loadPageRevisions = async () => {
+        if (selectedDocumentId === null || !wordIndexPage) return;
+        setRevisionLoading(true);
+        try {
+            const result = await window.ocrStudio.listPageRevisions({
+                projectPath, documentId: selectedDocumentId, pageNumber: wordIndexPage.pageNumber,
+            });
+            setPageRevisions(result.revisions || []);
+        } catch (error) {
+            setRevisionMessage(error instanceof Error ? error.message : "Could not load revision history.");
+        } finally { setRevisionLoading(false); }
+    };
+
+    const compareLatestRevisions = async () => {
+        if (selectedDocumentId === null || !wordIndexPage || pageRevisions.length < 2) return;
+        const result = await window.ocrStudio.diffPageRevisions({
+            projectPath, documentId: selectedDocumentId, pageNumber: wordIndexPage.pageNumber,
+            leftRevisionId: pageRevisions[1].id, rightRevisionId: pageRevisions[0].id,
+        });
+        setRevisionDiff(result.diff);
+        setRevisionMessage(result.success ? "Latest two revisions compared." : (result.message || "Could not compare revisions."));
+    };
+
+    const restoreRevision = async (revisionId: string) => {
+        if (selectedDocumentId === null || !wordIndexPage) return;
+        if (!window.confirm("Restore this page revision? The current page will be backed up first.")) return;
+        setRevisionLoading(true);
+        const result = await window.ocrStudio.restorePageRevision({
+            projectPath, documentId: selectedDocumentId, pageNumber: wordIndexPage.pageNumber, revisionId,
+        });
+        setRevisionMessage(result.message);
+        if (result.success && result.page) { setWordIndexPage(result.page); await loadPageRevisions(); }
+        setRevisionLoading(false);
+    };
+
     const saveWordReview = async (
         action: "correct" | "verify" | "ignore" | "reset"
     ) => {
@@ -2491,6 +2543,7 @@ export default function ReviewTab({
 
             void loadDocumentReviewQueue();
             void loadCorrectionMemory();
+            void loadPageRevisions();
 
             if (
                 documentSearchResults.length > 0 ||
@@ -5738,6 +5791,35 @@ export default function ReviewTab({
                                             in the page word database and
                                             correction history.
                                         </small>
+
+                                        <div className="revision-history-panel" style={{ marginTop: 16, borderTop: "1px solid var(--border-color, #ddd)", paddingTop: 12 }}>
+                                            <div className="word-correction-header">
+                                                <div><span>Page revision history</span><strong>{pageRevisions.length} revision(s)</strong></div>
+                                                <div style={{ display: "flex", gap: 8 }}>
+                                                    <button type="button" className="small-button" disabled={revisionLoading} onClick={() => void loadPageRevisions()}>Refresh</button>
+                                                    <button type="button" className="small-button" disabled={revisionLoading || pageRevisions.length < 2} onClick={() => void compareLatestRevisions()}>Compare latest</button>
+                                                </div>
+                                            </div>
+                                            {revisionDiff && (
+                                                <small>Diff: {revisionDiff.added} added · {revisionDiff.removed} removed · {revisionDiff.modified} modified</small>
+                                            )}
+                                            {revisionMessage && <div className="word-review-message">{revisionMessage}</div>}
+                                            {pageRevisions.length === 0 ? (
+                                                <small>No revisions yet. Saving, verifying, ignoring, or resetting a word creates a page revision automatically.</small>
+                                            ) : (
+                                                <div style={{ display: "grid", gap: 8, marginTop: 8, maxHeight: 220, overflow: "auto" }}>
+                                                    {pageRevisions.map((revision) => (
+                                                        <article key={revision.id} style={{ border: "1px solid var(--border-color, #ddd)", borderRadius: 8, padding: 10 }}>
+                                                            <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                                                                <div><strong>{revision.action}</strong><br/><small>{new Date(revision.createdAt).toLocaleString()} · {revision.wordCount} words</small></div>
+                                                                <button type="button" className="small-button danger" disabled={revisionLoading} onClick={() => void restoreRevision(revision.id)}>Restore</button>
+                                                            </div>
+                                                            {revision.comment && <small>{revision.comment}</small>}
+                                                        </article>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
 
                                         {wordReviewMessage && (
                                             <div className="word-review-message">
