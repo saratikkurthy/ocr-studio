@@ -1,0 +1,16 @@
+Phase 6E.2.5C validation
+
+PASS node --check electron/researchCopilotService.js
+PASS node --check electron/main.js
+PASS node --check electron/preload.cjs
+PASS npx tsc -p tsconfig.json
+PASS npm run build (TypeScript + Vite production build)
+
+Validated features:
+- Research Copilot IPC registration
+- Research report persistence
+- Six research modes
+- Manuscript-index evidence retrieval
+- Ollama grounded report composition
+- Markdown, HTML and JSON exports
+- React route, sidebar navigation and responsive layout

@@ -313,6 +313,92 @@ type ReviewCollaborationState = {
 declare global {
     interface Window {
         ocrStudio: {
+            listResearchReports: (data: { workspacePath: string }) => Promise<any>;
+            getResearchReport: (data: { workspacePath: string; reportId: string }) => Promise<any>;
+            runResearchCopilot: (data: { workspacePath: string; collectionId?: string | null; mode: string; question: string }) => Promise<any>;
+            deleteResearchReport: (data: { workspacePath: string; reportId: string }) => Promise<any>;
+            exportResearchReport: (data: { workspacePath: string; reportId: string; format: "markdown" | "html" | "json" }) => Promise<any>;
+            openResearchExport: (filePath: string) => Promise<any>;
+
+            getAssistantSettings: (data: { workspacePath: string }) => Promise<any>;
+            saveAssistantSettings: (data: { workspacePath: string; settings: any }) => Promise<any>;
+            checkOllama: (data: { endpoint: string }) => Promise<any>;
+            listAssistantConversations: (data: { workspacePath: string }) => Promise<any>;
+            getAssistantConversation: (data: { workspacePath: string; conversationId: string }) => Promise<any>;
+            deleteAssistantConversation: (data: { workspacePath: string; conversationId: string }) => Promise<any>;
+            askManuscriptAssistant: (data: { workspacePath: string; collectionId: string | null; conversationId: string | null; question: string; settings: any }) => Promise<any>;
+            getManuscriptIndexStatus: (data: { workspacePath: string }) => Promise<{ success: boolean; message: string; metadata: any | null }>;
+            buildManuscriptIndex: (data: { workspacePath: string; chunkWords: number; overlap: number }) => Promise<{ success: boolean; message: string; metadata: any | null }>;
+            searchManuscriptIndex: (data: { workspacePath: string; collectionId: string | null; query: string; limit: number }) => Promise<{ success: boolean; message: string; results: any[]; metadata?: any }>;
+            openManuscriptIndexPath: (filePath: string) => Promise<{ success: boolean; message: string }>;
+            scanDuplicates: (data: { workspacePath: string; collectionId?: string | null; threshold?: number }) => Promise<any>;
+            getDuplicateRegistry: (data: { workspacePath: string }) => Promise<any>;
+            exportDuplicateReport: (data: { workspacePath: string }) => Promise<{ success: boolean; message: string; files: string[] }>;
+            openDuplicateReport: (filePath: string) => Promise<string>;
+            searchAcrossProjects: (data: {
+                workspacePath: string;
+                collectionId: string | null;
+                query: string;
+                mode: string;
+                limit: number;
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                results: Array<{
+                    id: string;
+                    projectId: number;
+                    projectName: string;
+                    projectPath: string;
+                    documentId: number;
+                    documentName: string;
+                    pageNumber: number;
+                    wordId: string | null;
+                    text: string;
+                    originalText: string;
+                    correctedText: string | null;
+                    confidence: number;
+                    status: string;
+                    language: string;
+                    context: Array<{
+                        id: string | null;
+                        text: string;
+                        selected: boolean;
+                        confidence: number;
+                    }>;
+                }>;
+                summary: {
+                    projects: number;
+                    matchedProjects: number;
+                    documents: number;
+                    pages: number;
+                    words: number;
+                    matches: number;
+                };
+                truncated: boolean;
+                scope?: {
+                    type: string;
+                    id: string | null;
+                    name: string;
+                };
+            }>;
+
+            exportCrossProjectSearch: (data: {
+                workspacePath: string;
+                query: string;
+                results: any[];
+            }) => Promise<{
+                success: boolean;
+                message: string;
+                filePath: string | null;
+            }>;
+
+            listCollections: (data: { workspacePath: string }) => Promise<{ success: boolean; collections: any[]; unassignedProjects: any[] }>;
+            createCollection: (data: any) => Promise<{ success: boolean; message: string; collection?: any }>;
+            updateCollection: (data: any) => Promise<{ success: boolean; message: string; collection?: any }>;
+            deleteCollection: (data: { workspacePath: string; collectionId: string }) => Promise<{ success: boolean; message: string }>;
+            assignProjectToCollection: (data: { workspacePath: string; projectId: number; collectionId: string | null }) => Promise<{ success: boolean; message: string }>;
+            exportCollection: (data: { workspacePath: string; collectionId: string }) => Promise<{ success: boolean; message: string; filePath: string | null }>;
+
             selectWorkspaceFolder: () => Promise<string | null>;
             listOcrQueue: (data: {
                 projectPath: string;
@@ -352,6 +438,8 @@ declare global {
                 compression?: string;
             }) => Promise<ProjectInfo>;
 
+            getWorkspaceIntelligence: (data: { workspacePath: string }) => Promise<{ success: boolean; message?: string; dashboard: any }>;
+            exportWorkspaceIntelligence: (data: { workspacePath: string }) => Promise<{ success: boolean; message: string; filePath: string | null }>;
             listRecentProjects: () => Promise<ProjectInfo[]>;
 
             openInputFolder: (projectPath: string) => Promise<string>;

@@ -19,6 +19,11 @@ export default function MainLayout({ children }: MainLayoutProps) {
         <nav>
           <NavLink to="/">⌂ Dashboard</NavLink>
           <NavLink to="/projects">📁 Projects</NavLink>
+          <NavLink to="/collections">📚 Collections</NavLink>
+          <NavLink to="/search">🔎 Library Search</NavLink>
+          <NavLink to="/duplicates">🧬 Duplicate Detection</NavLink>
+          <NavLink to="/assistant">✦ AI Manuscript Assistant</NavLink>
+          <NavLink to="/research">📖 Research Copilot</NavLink>
           <NavLink to="/import">⇧ Import Documents</NavLink>
           <NavLink to="/jobs">⚙ OCR Jobs</NavLink>
           <NavLink to="/pipelines">🔱 Pipelines</NavLink>

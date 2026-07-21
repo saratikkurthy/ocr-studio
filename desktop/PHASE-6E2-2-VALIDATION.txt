@@ -1,0 +1,7 @@
+node --check electron/main.js: PASS
+node --check electron/preload.cjs: PASS
+node --check electron/crossProjectSearchService.js: PASS
+npx tsc: PASS
+vite build (direct Node invocation): FAILED
+
+Note: npm run build could not invoke the local vite shell shim in this Linux packaging environment because the shim lacked execute permission. The same Vite build was run directly through Node.

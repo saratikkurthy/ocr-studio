@@ -6,6 +6,13 @@ import crypto from "crypto";
 import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net } from "electron";
 import { exec, spawn } from "child_process";
 import { analyzePdf } from "./analysis/pdfAnalyzer.js";
+import { registerCollectionIpc } from "./collectionService.js";
+import { registerCrossProjectSearchIpc } from "./crossProjectSearchService.js";
+import { registerDuplicateDetectionIpc } from "./duplicateDetectionService.js";
+import { registerWorkspaceIntelligenceIpc } from "./workspaceIntelligenceService.js";
+import { registerManuscriptIndexIpc } from "./manuscriptIndexService.js";
+import { registerOllamaAssistantIpc } from "./ollamaAssistantService.js";
+import { registerResearchCopilotIpc } from "./researchCopilotService.js";
 
 
 protocol.registerSchemesAsPrivileged([
@@ -381,6 +388,14 @@ function broadcastQueueWorkerStatus(projectPath, status, message, queueItemId) {
     queueItemId,
   });
 }
+registerCollectionIpc(ipcMain, dialog, shell, readRecentProjects);
+registerCrossProjectSearchIpc(ipcMain, readRecentProjects);
+registerDuplicateDetectionIpc(ipcMain, dialog, shell, readRecentProjects);
+registerWorkspaceIntelligenceIpc(ipcMain, readRecentProjects);
+registerManuscriptIndexIpc(ipcMain, shell, readRecentProjects);
+registerOllamaAssistantIpc(ipcMain);
+registerResearchCopilotIpc(ipcMain, shell);
+
 ipcMain.handle("workspace:selectFolder", async () => {
   const result = await dialog.showOpenDialog({
     title: "Select OCR Studio Workspace",

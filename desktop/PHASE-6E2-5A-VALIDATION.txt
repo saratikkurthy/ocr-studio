@@ -1,0 +1,16 @@
+Phase 6E.2.5A validation
+
+PASS node --check electron/manuscriptIndexService.js
+PASS node --check electron/main.js
+PASS node --check electron/preload.cjs
+PASS npx tsc --noEmit
+PASS npm run build
+
+Validated features:
+- Electron IPC registration
+- Preload bridge methods
+- React route and sidebar navigation
+- Local index construction
+- Local ranked retrieval
+- Collection scope support
+- Page-level citation rendering

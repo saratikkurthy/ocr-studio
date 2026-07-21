@@ -3,6 +3,11 @@ import MainLayout from "./layouts/MainLayout";
 
 import DashboardPage from "./pages/Dashboard/DashboardPage";
 import ProjectsPage from "./pages/Projects/ProjectsPage";
+import CollectionsPage from "./pages/Collections/CollectionsPage";
+import CrossProjectSearchPage from "./pages/Search/CrossProjectSearchPage";
+import DuplicateDetectionPage from "./pages/Duplicates/DuplicateDetectionPage";
+import ManuscriptAssistantPage from "./pages/Assistant/ManuscriptAssistantPage";
+import ResearchCopilotPage from "./pages/Research/ResearchCopilotPage";
 import ImportPage from "./pages/Import/ImportPage";
 import JobsPage from "./pages/Jobs/JobsPage";
 import PipelinesPage from "./pages/Pipelines/PipelinesPage";
@@ -20,6 +25,11 @@ function App() {
         <Routes>
           <Route path="/" element={<DashboardPage />} />
           <Route path="/projects" element={<ProjectsPage />} />
+          <Route path="/collections" element={<CollectionsPage />} />
+          <Route path="/search" element={<CrossProjectSearchPage />} />
+          <Route path="/duplicates" element={<DuplicateDetectionPage />} />
+          <Route path="/assistant" element={<ManuscriptAssistantPage />} />
+          <Route path="/research" element={<ResearchCopilotPage />} />
           <Route path="/import" element={<ImportPage />} />
           <Route path="/jobs" element={<JobsPage />} />
           <Route path="/pipelines" element={<PipelinesPage />} />

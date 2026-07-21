@@ -1,0 +1,10 @@
+Phase 6E.2.5B validation
+
+PASS node --check electron/ollamaAssistantService.js
+PASS node --check electron/manuscriptIndexService.js
+PASS node --check electron/main.js
+PASS node --check electron/preload.cjs
+PASS npx tsc --noEmit
+PARTIAL npm run build: TypeScript passed, but Vite executable is absent from the supplied archive environment (sh: vite: not found).
+
+Runtime Ollama calls require Ollama and at least one locally installed model on the user's computer.
