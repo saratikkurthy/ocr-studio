@@ -1,0 +1,11 @@
+Phase 10B Milestone 3 validation
+
+PASS node --check electron/manuscriptCollationService.js
+PASS node --check electron/main.js
+PASS node --check electron/preload.cjs
+PASS TypeScript compilation
+PASS Vite production build
+PASS Electron IPC registration
+PASS React route and sidebar integration
+
+Informational: Vite reports that the main JavaScript bundle exceeds 500 kB after minification.

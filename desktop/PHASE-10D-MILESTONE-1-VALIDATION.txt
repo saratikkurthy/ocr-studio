@@ -1,0 +1,10 @@
+PASS institutional repository service syntax
+PASS Electron main-process syntax
+PASS preload bridge syntax
+PASS publication persistence integration test
+PASS Dublin Core XML export test
+PASS DataCite JSON export test
+PASS OAI-PMH Dublin Core record export test
+PASS SHA-256 BagIt-style preservation package test
+PASS preservation event persistence test
+NOT RUN TypeScript/Vite production build: source archive does not include node_modules

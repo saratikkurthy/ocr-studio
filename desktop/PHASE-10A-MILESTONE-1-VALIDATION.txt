@@ -1,0 +1,2 @@
+Phase 10.0A Milestone 1 — Scholarly Edition Manager
+Validated: Electron service syntax, main process syntax, preload syntax, TypeScript compilation, Vite production build.

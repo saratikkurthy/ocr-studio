@@ -1,0 +1,15 @@
+Phase 10C Milestone 2 validation
+================================
+PASS scholarlyAssistantService.js syntax (node --check)
+PASS Electron main.js syntax (node --check)
+PASS Electron preload.cjs syntax (node --check)
+PASS IPC registration integration
+PASS semantic index integration test
+PASS evidence-grounded question integration test
+PASS conversation persistence integration test
+PASS notebook persistence integration test
+PASS bookmark persistence integration test
+PASS SBL citation generation integration test
+PASS HTML export integration test
+PASS React route, sidebar and preload wiring inspection
+NOT RUN TypeScript/Vite production build: project dependencies were not available in the packaging environment. Run npm install && npm run build after extraction.

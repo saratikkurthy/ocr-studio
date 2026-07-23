@@ -1,0 +1,14 @@
+Phase 10C Milestone 1 validation
+
+PASS entityIntelligenceService.js syntax (node --check)
+PASS Electron main.js syntax (node --check)
+PASS preload.cjs syntax (node --check)
+PASS TypeScript source configuration parse (tsc --noEmit)
+PASS IPC integration test: entity persistence
+PASS IPC integration test: relationship persistence
+PASS IPC integration test: timeline persistence
+PASS IPC integration test: map persistence
+PASS GraphML export integration test
+PASS application routing and sidebar wiring review
+
+Production Vite bundle was not regenerated in the packaging environment because project dependencies were unavailable there. Run `npm install` and `npm run build` in the desktop folder to regenerate `dist` from the included source.
